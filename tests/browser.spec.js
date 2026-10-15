@@ -90,7 +90,8 @@ async function bootRecovery(page, context, file) {
             video.volume = 0;
             video.playsInline = true;
             const player = {
-                video, plays: 0, core: { state: { position: 10, bufferedPosition: 40 } },
+                video, plays: 0, core: { state: { position: 10, bufferedPosition: 40,
+                    path: 'https://usher.ttvnw.net/api/v2/channel/hls/fixture-channel.m3u8?token=fixture' } },
                 getHTMLVideoElement: () => video, getBufferDuration: () => 30,
                 getState: () => video.paused ? 'Paused' : 'Playing', isPaused: () => video.paused,
                 pause() { this.core.paused = true; video.pause(); },
@@ -226,6 +227,29 @@ for (const script of scripts) {
                 originalConnected: window.__recoveryFixture.players[0].video.isConnected
             }))).toEqual({ reloads: [{ isNewMediaPlayerInstance: true, refreshAccessToken: true }], originalConnected: false });
         });
+
+        for (const navigateDuringRecovery of [false, true]) {
+            test(script.file + ' recovers the Drops mini-player, navigation during recovery=' + navigateDuringRecovery, async ({ page, context }) => {
+                await bootRecovery(page, context, script.file);
+                if (!navigateDuringRecovery) await page.evaluate(() => history.pushState({}, '', '/drops/inventory'));
+                await page.evaluate(() => window.__recoveryFixture.reload('early'));
+                expect(await page.evaluate(() => window.__recoveryFixture.reloads.length)).toBe(1);
+                if (navigateDuringRecovery) await page.evaluate(() => history.pushState({}, '', '/drops/inventory'));
+                await expect.poll(() => page.evaluate(() => window.__recoveryFixture.current.video.readyState)).toBeGreaterThanOrEqual(2);
+                await page.evaluate(() => { window.__recoveryFixture.current.video.currentTime = 17; });
+                await expect.poll(() => page.evaluate(() => window.__recoveryFixture.current.video.readyState)).toBeGreaterThanOrEqual(2);
+                await page.clock.runFor(150);
+                await expect.poll(() => page.evaluate(() => window.__recoveryFixture.current.video.currentTime)).toBeGreaterThan(17.2);
+                await page.clock.runFor(3000);
+                expect(await page.evaluate(() => ({
+                    muted: window.__recoveryFixture.current.video.muted,
+                    paused: window.__recoveryFixture.current.video.paused,
+                    plays: window.__recoveryFixture.current.plays,
+                    reloads: window.__recoveryFixture.reloads.length,
+                    adMuted: document.getElementById('fixture-ad').muted
+                }))).toEqual({ muted: false, paused: false, plays: 1, reloads: 1, adMuted: true });
+            });
+        }
 
         for (const userMute of [false, true]) {
             test(script.file + ' rolls back failed native-video recovery, user mute=' + userMute, async ({ page, context }) => {

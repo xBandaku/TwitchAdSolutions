@@ -475,7 +475,7 @@ function playbackContext(source) {
     const storage = new Map();
     const context = vm.createContext({
         console: { log() {}, error(message) { throw new Error(message); } },
-        Response, Headers, AbortController, ReadableStream, DOMException,
+        Response, Headers, AbortController, ReadableStream, DOMException, URL,
         window: { location: { href: 'https://www.twitch.tv/fixture' } },
         timers, listeners, video,
         setTimeout(callback, delay) { timers.set(++nextTimer, { callback, delay }); return nextTimer; },
@@ -509,6 +509,9 @@ function playbackContext(source) {
         state: { props: { content: { type: 'live' } } }
     };
     context.getPlayerAndState = () => context.playerAndState;
+    if (source.includes('function getPlaybackChannelName(')) {
+        vm.runInContext(scriptFunction(source, 'getPlaybackChannelName'), context);
+    }
     return context;
 }
 

@@ -37,7 +37,7 @@ twitch-videoad.js text/javascript
         }
     }
     'use strict';
-    const ourTwitchAdSolutionsVersion = 110;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 111;// Used to prevent conflicts with outdated versions of the scripts
     console.log('[AD DEBUG] TwitchAdSolutions vaft v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
         console.log('[AD DEBUG] CONFLICT: vaft v' + ourTwitchAdSolutionsVersion + ' skipped — another script already active (v' + window.twitchAdSolutionsVersion + '). Remove duplicate scripts.');
@@ -538,12 +538,21 @@ twitch-videoad.js text/javascript
             }
         });
     }
+    function getPlaybackChannelName(playerAndState) {
+        const url = new URL(window.location.href);
+        if (url.hostname === 'player.twitch.tv') return url.searchParams.get('channel')?.toLowerCase();
+        // The Drops route keeps the live mini-player, so the route is not its channel.
+        if (/^\/drops(?:\/|$)/.test(url.pathname)) {
+            const current = playerAndState ?? getPlayerAndState();
+            if (current?.state?.props?.content?.type !== 'live') return null;
+            return current.player?.core?.state?.path?.match(/\/api\/(?:v2\/)?channel\/hls\/([^/?#]+)\.m3u8(?:[?#]|$)/i)?.[1]?.toLowerCase();
+        }
+        return url.pathname.split('/')[1]?.toLowerCase();
+    }
     function isCurrentStreamMessage(worker, message) {
         if (!twitchWorkers.includes(worker)) return false;
         if (!message?.channelName) return true;
-        const url = new URL(window.location.href);
-        const channelName = url.hostname === 'player.twitch.tv' ? url.searchParams.get('channel') : url.pathname.split('/')[1];
-        return channelName?.toLowerCase() === message.channelName.toLowerCase();
+        return getPlaybackChannelName() === message.channelName.toLowerCase();
     }
     function getWasmWorkerJs(twitchBlobUrl) {
         if (!getWasmWorkerJs.cache) {
@@ -2668,6 +2677,9 @@ twitch-videoad.js text/javascript
                 console.log('[AD DEBUG] Player settings unavailable during recovery: ' + error.message);
             }
             const route = window.location.href;
+            const channelName = getPlaybackChannelName(playerAndState);
+            const isSameStream = current => channelName
+                ? getPlaybackChannelName(current) === channelName : window.location.href === route;
             const request = { promise: null, cancelled: false };
             let resolveRecovery, pollTimer, cleanupMute = () => {};
             let attempt = 0, maxAttempts = 2, needsUpgrade = false;
@@ -2686,7 +2698,7 @@ twitch-videoad.js text/javascript
             const isCurrent = () => {
                 const current = getPlayerAndState();
                 return doTwitchPlayerTask.latestRecovery === request && !request.cancelled
-                    && window.location.href === route && !playerBufferState.userPauseIntent
+                    && isSameStream(current) && !playerBufferState.userPauseIntent
                     && (!current?.state?.props?.content?.type || current.state.props.content.type === 'live');
             };
             const finish = success => {
@@ -2717,7 +2729,7 @@ twitch-videoad.js text/javascript
             const rollbackPreMute = () => {
                 const current = getPlayerAndState();
                 if (preMutedVideo && doTwitchPlayerTask.latestRecovery === request
-                    && window.location.href === route && current?.state?.props?.content?.type === 'live'
+                    && isSameStream(current) && current?.state?.props?.content?.type === 'live'
                     && current.player?.getHTMLVideoElement?.() === preMutedVideo && !muteWasChanged()) {
                     preMutedVideo.muted = false;
                 }

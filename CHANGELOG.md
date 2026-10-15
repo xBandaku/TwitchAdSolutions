@@ -1,9 +1,25 @@
-## Unreleased
+## v68.5.25 (2026-10-15)
+
+### Fixed
+
+- Match recovery messages on the Drops page to the live mini-player's playlist channel. Keep recovery running when the same stream moves between its channel page and Drops; cancel it if the channel changes.
+
+### Code cleanup
 
 - Share early-reload budget checks and ad-end tracking resets between vaft worker paths. Remove the unreachable soft-reload branch and its ineffective configuration option. Keep existing reload decisions and limits.
 - Share script-function loading across the Node tests, worker validation and benchmark. Benchmark the current vaft source instead of copied historical implementations; run it with `npm run benchmark`.
 - Remove the obsolete comparison document, which described retired testing scripts and older upstream versions.
+
+### Tests
+
+- Cover Drops navigation and recovery with worker messages, replacement native media, mute restoration and stale-channel rejection.
 - Add coverage for shared reload decisions, post-ad actions and helper execution inside injected browser workers.
+- Local validation passed 255 runtime assertions, 104 Node tests and 126 browser tests. Windows WebKit skipped 18 native-media cases because it cannot decode the PCM fixture; the release workflow runs the full suite on Linux.
+
+### Distribution
+
+- Vaft 68.5.25 (internal version 111), including the unreleased v68.5.24 refactor. Both userscript and uBlock formats include the Drops recovery fix.
+- The release includes the userscript, uBlock resource, seven-script ZIP bundle and SHA256SUMS.
 
 ## v68.5.23 (2026-10-15)
 

@@ -344,6 +344,37 @@ for (const file of files) {
         ios.context.doTwitchPlayerTask.recovery.cancel();
     });
 
+    test(file + ' completes recovery across Drops mini-player navigation', async () => {
+        for (const startOnDrops of [false, true]) {
+            const h = recoveryHarness(file);
+            h.current.player.core.state = { path: 'https://usher.ttvnw.net/api/v2/channel/hls/fixture.m3u8?token=fixture' };
+            const drops = 'https://www.twitch.tv/drops/inventory';
+            if (startOnDrops) h.window.location.href = drops;
+            const pending = h.context.doTwitchPlayerTask(false, true, 'early');
+            h.window.location.href = startOnDrops ? 'https://www.twitch.tv/fixture' : drops;
+            h.advance(150);
+            h.current.player.video.currentTime++;
+            h.advance(150);
+            assert.equal(await pending, true);
+            assert.equal(h.current.player.plays, 1);
+            assert.equal(h.reloads.length, 1);
+            h.advance(3000);
+            assert.equal(h.current.player.video.muted, false);
+        }
+    });
+
+    test(file + ' cancels recovery when the Drops mini-player changes channel', async () => {
+        const h = recoveryHarness(file);
+        h.window.location.href = 'https://www.twitch.tv/drops/inventory';
+        h.current.player.core.state = { path: 'https://usher.ttvnw.net/api/channel/hls/fixture.m3u8?token=fixture' };
+        const pending = h.context.doTwitchPlayerTask(false, true, 'early');
+        h.current.player.core.state.path = 'https://usher.ttvnw.net/api/channel/hls/other.m3u8?token=fixture';
+        h.advance(13000);
+        assert.equal(await pending, false);
+        assert.equal(h.current.player.plays, 0);
+        assert.equal(h.reloads.length, 1);
+    });
+
     test(file + ' preserves mute and settings changes made during recovery', async () => {
         const h = recoveryHarness(file);
         h.current.player.video.muted = false;
@@ -467,6 +498,26 @@ for (const file of files) {
         registerStream(context);
         context.postStreamMessage(stream, { key: 'ReloadPlayer' });
         assert.equal(messages.length, 1);
+    });
+
+    test(file + ' matches Drops messages to the live mini-player source', () => {
+        const h = recoveryHarness(file), worker = {}, replaced = {};
+        h.context.twitchWorkers = [worker];
+        h.window.location.href = 'https://www.twitch.tv/drops/inventory';
+        for (const version of ['', 'v2/']) {
+            h.current.player.core.state = { path: 'https://usher.ttvnw.net/api/' + version + 'channel/hls/FiXtUrE.m3u8?token=fixture' };
+            assert.equal(h.context.isCurrentStreamMessage(worker, { channelName: 'fixture' }), true);
+            assert.equal(h.context.isCurrentStreamMessage(worker, { channelName: 'other' }), false);
+            assert.equal(h.context.isCurrentStreamMessage(worker, { channelName: 'drops' }), false);
+            assert.equal(h.context.isCurrentStreamMessage(replaced, { channelName: 'fixture' }), false);
+        }
+        for (const path of [undefined, 'https://video-edge.example.net/chunked.m3u8', 'https://usher.ttvnw.net/vod/fixture.m3u8']) {
+            h.current.player.core.state.path = path;
+            assert.equal(h.context.isCurrentStreamMessage(worker, { channelName: 'fixture' }), false);
+        }
+        h.current.player.core.state.path = 'https://usher.ttvnw.net/api/channel/hls/fixture.m3u8';
+        h.current.state.props.content.type = 'video';
+        assert.equal(h.context.isCurrentStreamMessage(worker, { channelName: 'fixture' }), false);
     });
 
     test(file + ' times out backup headers and bodies and rejects invalid playlists', async () => {
