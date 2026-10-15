@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TwitchAdSolutions (vaft)
 // @namespace    https://github.com/ryanbr/TwitchAdSolutions
-// @version      68.5.23
+// @version      68.5.24
 // @description  Multiple solutions for blocking Twitch ads (vaft)
 // @updateURL    https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft.user.js
 // @downloadURL  https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft.user.js
@@ -48,7 +48,7 @@
         }
     }
     'use strict';
-    const ourTwitchAdSolutionsVersion = 109;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 110;// Used to prevent conflicts with outdated versions of the scripts
     console.log('[AD DEBUG] TwitchAdSolutions vaft v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
         console.log('[AD DEBUG] CONFLICT: vaft v' + ourTwitchAdSolutionsVersion + ' skipped — another script already active (v' + window.twitchAdSolutionsVersion + '). Remove duplicate scripts.');
@@ -101,7 +101,6 @@
         scope.BackupSwapFirst = true;// On ad detect, immediately swap to a backup player-type m3u8 (TTV-AB-style). Avoids MediaSource mixing from strip activity — fewer loading circles in field. Cost: extra fetches on every ad break. Default on; set twitchAdSolutions_backupSwapFirst=false to disable.
         scope.DisableAdSpoofing = true;// Default OFF (was ON through v68.2.0). The always-100%-watched + audible + visible spoof beacon pattern may itself fingerprint as anomalous and trigger detection escalation (CSAI reaching the committed backup) — observed correlation in field + TTV-AB maintainer hypothesis. Spoof-accepted (no GQL rejection) does NOT prove not-fingerprinted; Twitch can 200-OK while using the beacon pattern as silent detection input. Opt in by setting twitchAdSolutions_disableAdSpoofing=false to re-enable the GQL ad-tracking beacons (video_ad_impression, video_ad_quartile_complete x 4, video_ad_pod_complete).
         scope.RecoverFromSilentMute = true;// On hard reload, if the element is already muted but vaft has successfully unmuted at any point earlier this session, treat it as a silent Twitch re-mute and recover via the backstop. Default on; set twitchAdSolutions_recoverFromSilentMute=false to disable (useful for users who deliberately mute mid-session).
-        scope.SoftReloadNoStrip = true;// Issue #129 (mode D): post-ad reload uses SOFT reload when the break stripped no segments (BackupSwapFirst CSAI swap). Hard reload's MediaSource flush is only needed after strip injection (BLANK_MP4/recovery) — on a no-strip break it just pays the desktop black-screen + play-icon teardown for nothing. Default on; set twitchAdSolutions_softReloadNoStrip=false to force the old always-hard behavior.
         scope.DisablePostBreakWedge = false;// Post-break video-wedge recovery (mirrors GosuDRM/TTV-AB _checkPostBreakWedge, v12.0.0). Detects "audio running, video frozen" after an ad break — playhead advancing while the decoder emits no new frames — via getVideoPlaybackQuality().totalVideoFrames, which the currentTime-based freeze checks can't see. Default on. Set twitchAdSolutions_disablePostBreakWedge=true to turn it OFF.
         scope.SkipPlayerReloadOnHevc = false;// If true this will skip player reload on streams which have 2k/4k quality (if you enable this and you use the 2k/4k quality setting you'll get error #4000 / #3000 / spinning wheel on chrome based browsers). Despite the name, gates BOTH enhanced families (HEVC and AV1) since v68.5.3.
         scope.AlwaysReloadPlayerOnAd = false;// Always pause/play when entering/leaving ads
@@ -380,6 +379,8 @@
                     ${getStreamUrlForResolution.toString()}
                     ${processM3U8.toString()}
                     ${processStreamPlaylist.toString()}
+                    ${resetAdEndTracking.toString()}
+                    ${triggerEarlyReloadIfNeeded.toString()}
                     ${postStreamMessage.toString()}
                     ${hookWorkerFetch.toString()}
                     ${declareOptions.toString()}
@@ -406,7 +407,6 @@
                     FastAutoplayFirstTry = ${FastAutoplayFirstTry};
                     BackupSwapFirst = ${BackupSwapFirst};
                     DisableAdSpoofing = ${DisableAdSpoofing};
-                    SoftReloadNoStrip = ${SoftReloadNoStrip};
                     ForceAccessTokenPlayerType = '${ForceAccessTokenPlayerType}';
                     GQLDeviceID = ${GQLDeviceID ? "'" + GQLDeviceID + "'" : null};
                     AuthorizationHeader = ${AuthorizationHeader ? "'" + AuthorizationHeader + "'" : undefined};
@@ -1273,6 +1273,28 @@
             postMessage({ ...message, channelName: streamInfo.ChannelName, sessionId: streamInfo.SessionId });
         }
     }
+    function resetAdEndTracking(streamInfo) {
+        streamInfo.PendingAdEndAt = 0;
+        streamInfo.LastCandidateCleanAt = 0;
+        streamInfo.LastCleanSequence = null;
+        streamInfo.LastCleanSignature = null;
+        streamInfo.HasAdvancedCleanPlaylist = false;
+        streamInfo.AdEndBounceCount = 0;
+    }
+    function triggerEarlyReloadIfNeeded(streamInfo, sticky = false) {
+        const recoveryThin = (streamInfo.RecoverySegments?.length || 0) < 3;
+        const maxEarlyReloads = recoveryThin ? Math.max(2, streamInfo.PodLength || 1) : Math.max(1, streamInfo.PodLength || 1);
+        const effectiveThreshold = recoveryThin ? 1 : EarlyReloadPollThreshold;
+        if (EarlyReloadPollThreshold > 0 && (streamInfo.ConsecutiveAllStrippedPolls || 0) >= effectiveThreshold && !streamInfo.EarlyReloadTriggered && (streamInfo.EarlyReloadCount || 0) < maxEarlyReloads) {
+            streamInfo.EarlyReloadTriggered = true;
+            streamInfo.EarlyReloadAwaitingResult = true;
+            streamInfo.EarlyReloadCount = (streamInfo.EarlyReloadCount || 0) + 1;
+            streamInfo.EarlyReloadAtPoll = streamInfo.TotalAllStrippedPolls || streamInfo.ConsecutiveAllStrippedPolls;
+            const reason = recoveryThin ? ' (thin recovery cache: ' + (streamInfo.RecoverySegments?.length || 0) + ' segments)' : '';
+            console.log('[AD DEBUG] Early reload triggered' + (sticky ? ' (sticky path)' : '') + ': ' + streamInfo.ConsecutiveAllStrippedPolls + ' consecutive all-stripped polls' + reason + ' [' + streamInfo.EarlyReloadCount + '/' + maxEarlyReloads + ']');
+            postStreamMessage(streamInfo, { key: 'ReloadPlayer', kind: 'early' });
+        }
+    }
     async function processStreamPlaylist(url, textStr, realFetch, streamInfo) {
         if (!streamInfo) {
             return textStr;
@@ -1321,12 +1343,7 @@
             if (streamInfo.PendingAdEndAt && (Date.now() - streamInfo.LastCandidateCleanAt) < adEndStalenessMs) {
                 streamInfo.AdEndBounceCount = (streamInfo.AdEndBounceCount || 0) + 1;
             } else {
-                streamInfo.PendingAdEndAt = 0;
-                streamInfo.LastCandidateCleanAt = 0;
-                streamInfo.LastCleanSequence = null;
-                streamInfo.LastCleanSignature = null;
-                streamInfo.HasAdvancedCleanPlaylist = false;
-                streamInfo.AdEndBounceCount = 0;
+                resetAdEndTracking(streamInfo);
             }
             streamInfo.CleanPlaylistCount = 0;
             streamInfo.IsMidroll = textStr.includes('"MIDROLL"') || textStr.includes('"midroll"');
@@ -1429,31 +1446,13 @@
                 if (IsAdStrippingEnabled) {
                     textStr = stripAdSegments(textStr, false, streamInfo);
                 }
-                // Early reload during prolonged freeze — mirrors the check in the normal
-                // backup-search path (line ~952) which we'd otherwise skip entirely by
-                // returning early from the sticky path. Without this, heavy SSAI breaks
-                // on CSAI-confirmed streams leave the player replaying the thin recovery
-                // cache for the full break duration (observed: 35.9s freeze on pod-1
-                // break, 3 all-stripped polls, 1-segment recovery cache).
-                // Bounded to maxEarlyReloads per ad in pod so reload loops are impossible.
-                // Check early reload result from previous poll (sticky path returns before the normal-path check)
+                // This path returns before backup search, so it checks the shared reload budget here.
                 if (streamInfo.EarlyReloadAwaitingResult) {
                     streamInfo.EarlyReloadAwaitingResult = false;
                     console.log('[AD DEBUG] Early reload result (sticky path): still ads — continuing recovery loop');
                     streamInfo.EarlyReloadTriggered = false;
                 }
-                const stickyRecoveryThin = (streamInfo.RecoverySegments?.length || 0) < 3;
-                const stickyMaxEarlyReloads = stickyRecoveryThin ? Math.max(2, streamInfo.PodLength || 1) : Math.max(1, streamInfo.PodLength || 1);
-                const stickyEffectiveThreshold = stickyRecoveryThin ? 1 : EarlyReloadPollThreshold;
-                if (EarlyReloadPollThreshold > 0 && (streamInfo.ConsecutiveAllStrippedPolls || 0) >= stickyEffectiveThreshold && !streamInfo.EarlyReloadTriggered && (streamInfo.EarlyReloadCount || 0) < stickyMaxEarlyReloads) {
-                    streamInfo.EarlyReloadTriggered = true;
-                    streamInfo.EarlyReloadAwaitingResult = true;
-                    streamInfo.EarlyReloadCount = (streamInfo.EarlyReloadCount || 0) + 1;
-                    streamInfo.EarlyReloadAtPoll = streamInfo.TotalAllStrippedPolls || streamInfo.ConsecutiveAllStrippedPolls;
-                    const stickyReason = stickyRecoveryThin ? ' (thin recovery cache: ' + (streamInfo.RecoverySegments?.length || 0) + ' segments)' : '';
-                    console.log('[AD DEBUG] Early reload triggered (sticky path) — ' + streamInfo.ConsecutiveAllStrippedPolls + ' consecutive all-stripped polls' + stickyReason + ' [' + streamInfo.EarlyReloadCount + '/' + stickyMaxEarlyReloads + ']');
-                    postStreamMessage(streamInfo, { key: 'ReloadPlayer', kind: 'early' });
-                }
+                triggerEarlyReloadIfNeeded(streamInfo, true);
                 postStreamMessage(streamInfo, {
                     key: 'UpdateAdBlockBanner',
                     isMidroll: streamInfo.IsMidroll,
@@ -1822,18 +1821,7 @@
             // Early reload during prolonged freeze: if we've been looping recovery segments
             // for N+ polls (~Nx2s), trigger a reload to attempt fresh content. Bounded to one
             // reload per ad in the pod (e.g. 2-ad pod = up to 2 early reloads).
-            const recoveryThin = (streamInfo.RecoverySegments?.length || 0) < 3;
-            const maxEarlyReloads = recoveryThin ? Math.max(2, streamInfo.PodLength || 1) : Math.max(1, streamInfo.PodLength || 1);
-            const effectiveThreshold = recoveryThin ? 1 : EarlyReloadPollThreshold;
-            if (EarlyReloadPollThreshold > 0 && (streamInfo.ConsecutiveAllStrippedPolls || 0) >= effectiveThreshold && !streamInfo.EarlyReloadTriggered && (streamInfo.EarlyReloadCount || 0) < maxEarlyReloads) {
-                streamInfo.EarlyReloadTriggered = true;
-                streamInfo.EarlyReloadAwaitingResult = true;
-                streamInfo.EarlyReloadCount = (streamInfo.EarlyReloadCount || 0) + 1;
-                streamInfo.EarlyReloadAtPoll = streamInfo.TotalAllStrippedPolls || streamInfo.ConsecutiveAllStrippedPolls;
-                const reason = recoveryThin ? ' (thin recovery cache: ' + (streamInfo.RecoverySegments?.length || 0) + ' segments)' : '';
-                console.log('[AD DEBUG] Early reload triggered — ' + streamInfo.ConsecutiveAllStrippedPolls + ' consecutive all-stripped polls' + reason + ' [' + streamInfo.EarlyReloadCount + '/' + maxEarlyReloads + ']');
-                postStreamMessage(streamInfo, { key: 'ReloadPlayer', kind: 'early' });
-            }
+            triggerEarlyReloadIfNeeded(streamInfo);
         } else if (streamInfo.IsShowingAd) {
             // Mark first candidate-end timestamp on the first clean poll seen this break,
             // so the slow-path max-wait gate below can fire even if subsequent polls bounce
@@ -1897,7 +1885,7 @@
                     if (streamInfo.ConsecutiveZeroStripBreaks >= 3) {
                         console.log('[AD DEBUG] Warning: ' + streamInfo.ConsecutiveZeroStripBreaks + ' consecutive unconfirmed ad breaks with 0 segments stripped — possible false positive from ad signifiers');
                     }
-                } else if (hadStrippedSegments || streamInfo.HasConfirmedAdAttrs) {
+                } else {
                     // Reset is symmetric with the increment guard above — any positive "break
                     // was handled cleanly" signal resets the false-positive history. Previously
                     // only stripped>0 reset the counter, which let stale suspicious history
@@ -1918,12 +1906,7 @@
                 if (streamInfo.LoggedBackupAdsByType) streamInfo.LoggedBackupAdsByType.clear();
                 streamInfo.LoggedContamReorderThisBreak = false;
                 streamInfo.CleanPlaylistCount = 0;
-                streamInfo.PendingAdEndAt = 0;
-                streamInfo.LastCandidateCleanAt = 0;
-                streamInfo.LastCleanSequence = null;
-                streamInfo.LastCleanSignature = null;
-                streamInfo.HasAdvancedCleanPlaylist = false;
-                streamInfo.AdEndBounceCount = 0;
+                resetAdEndTracking(streamInfo);
                 streamInfo.ConsecutiveAllStrippedPolls = 0;
                 streamInfo.EarlyReloadTriggered = false;
                 streamInfo.EarlyReloadAwaitingResult = false;
@@ -1935,7 +1918,7 @@
                 streamInfo.HasLoggedUnknownSignifiers = false;
                 streamInfo.LoggedFastAutoplayThisBreak = false;
                 streamInfo.LoggedFastAutoplayReprobeThisBreak = false;
-                // CSAI-only ad break: no segments were stripped — skip reload entirely.
+                // A no-strip break needs a reset only if backup playback changed the media source.
                 if (!hadStrippedSegments) {
                     console.log('[AD DEBUG] CSAI-only ad break (stripped 0) — clearing backup without player action');
                     streamInfo.IsUsingModifiedM3U8 = false;
@@ -1958,54 +1941,49 @@
                         postStreamMessage(streamInfo, { key: 'ReloadPlayer', kind: 'early' });
                     }
                 } else {
-                // Auto-escalate cooldown: if 3+ reloads in last 5 min, triple the cooldown
-                if (!streamInfo.ReloadTimestamps) streamInfo.ReloadTimestamps = [];
-                streamInfo.ReloadTimestamps = streamInfo.ReloadTimestamps.filter(t => Date.now() - t < 300000);
-                const recentReloads = streamInfo.ReloadTimestamps.filter(t => Date.now() - t < 300000).length;
-                const effectiveCooldown = recentReloads >= 3 ? ReloadCooldownSeconds * 3 : ReloadCooldownSeconds;
-                const tooSoonSinceLastReload = streamInfo.LastPlayerReload && (Date.now() - streamInfo.LastPlayerReload) < (effectiveCooldown * 1000);
-                // Skip end-of-break reload when cycle rescue handled the break cleanly:
-                // a freeze of ≤2 polls (~4s) was resolved by switching to a clean backup,
-                // and no early reload was needed. The player is on a healthy backup stream
-                // — reloading just to return to the canonical player type causes an unnecessary
-                // ~1-2s loading circle.
-                const cycleRescuedCleanly = streamInfo.CycleRescuedThisBreak &&
-                    (totalAllStrippedPolls || 0) <= 2 &&
-                    (streamInfo.EarlyReloadCount || 0) === 0;
-                if (cycleRescuedCleanly) {
-                    console.log('[AD DEBUG] Cycle rescue handled the break cleanly — skipping end-of-break reload');
-                }
-                // Post-ad reload bypasses cooldown: it's a buffer flush tied to natural break
-                // end, not a cascade-risk retry. The ad break cycle itself rate-limits this
-                // path (once per break). Cooldown still gates buffer-monitor and other
-                // cascade-risk paths that can fire repeatedly in-break.
-                const shouldReload = streamInfo.IsUsingModifiedM3U8 || (ReloadPlayerAfterAd && hadStrippedSegments && !cycleRescuedCleanly);
-                if (shouldReload) {
-                    streamInfo.ReloadTimestamps.push(Date.now());
-                    streamInfo.IsUsingModifiedM3U8 = false;
-                    streamInfo.LastPlayerReload = Date.now();
-                    // Hard reload when buffer may be dirty from strip or m3u8 modification —
-                    // soft reload preserves the existing MediaSource buffer, and any
-                    // timestamp weirdness from strip/BLANK_MP4/recovery injection persists
-                    // across it, causing audio/video desync over time.
-                    // Issue #129 mode D: when the break stripped NO segments (BackupSwapFirst CSAI swap),
-                    // nothing was injected into the MediaSource, so the hard-reload flush is unnecessary and
-                    // just pays the desktop black-screen + play-icon teardown — use a soft reload ('post-ad')
-                    // there. Strip breaks stay hard ('early'). doTwitchPlayerTask maps 'post-ad' → soft.
-                    const reloadKind = (SoftReloadNoStrip && !hadStrippedSegments) ? 'post-ad' : 'early';
-                    postStreamMessage(streamInfo, {
-                        key: 'ReloadPlayer',
-                        kind: reloadKind
-                    });
-                } else {
-                    if (tooSoonSinceLastReload) {
-                        console.log('[AD DEBUG] Skipping reload — last reload was ' + ((Date.now() - streamInfo.LastPlayerReload) / 1000).toFixed(0) + 's ago (cooldown: ' + effectiveCooldown + 's' + (recentReloads >= 3 ? ', auto-escalated from ' + recentReloads + ' reloads in 5min' : '') + ')');
+                    // Auto-escalate cooldown: if 3+ reloads in last 5 min, triple the cooldown
+                    if (!streamInfo.ReloadTimestamps) streamInfo.ReloadTimestamps = [];
+                    streamInfo.ReloadTimestamps = streamInfo.ReloadTimestamps.filter(t => Date.now() - t < 300000);
+                    const recentReloads = streamInfo.ReloadTimestamps.filter(t => Date.now() - t < 300000).length;
+                    const effectiveCooldown = recentReloads >= 3 ? ReloadCooldownSeconds * 3 : ReloadCooldownSeconds;
+                    const tooSoonSinceLastReload = streamInfo.LastPlayerReload && (Date.now() - streamInfo.LastPlayerReload) < (effectiveCooldown * 1000);
+                    // Skip end-of-break reload when cycle rescue handled the break cleanly:
+                    // a freeze of ≤2 polls (~4s) was resolved by switching to a clean backup,
+                    // and no early reload was needed. The player is on a healthy backup stream
+                    // — reloading just to return to the canonical player type causes an unnecessary
+                    // ~1-2s loading circle.
+                    const cycleRescuedCleanly = streamInfo.CycleRescuedThisBreak &&
+                        (totalAllStrippedPolls || 0) <= 2 &&
+                        (streamInfo.EarlyReloadCount || 0) === 0;
+                    if (cycleRescuedCleanly) {
+                        console.log('[AD DEBUG] Cycle rescue handled the break cleanly — skipping end-of-break reload');
                     }
-                    postStreamMessage(streamInfo, {
-                        key: 'PauseResumePlayer'
-                    });
+                    // Post-ad reload bypasses cooldown: it's a buffer flush tied to natural break
+                    // end, not a cascade-risk retry. The ad break cycle itself rate-limits this
+                    // path (once per break). Cooldown still gates buffer-monitor and other
+                    // cascade-risk paths that can fire repeatedly in-break.
+                    const shouldReload = streamInfo.IsUsingModifiedM3U8 || (ReloadPlayerAfterAd && !cycleRescuedCleanly);
+                    if (shouldReload) {
+                        streamInfo.ReloadTimestamps.push(Date.now());
+                        streamInfo.IsUsingModifiedM3U8 = false;
+                        streamInfo.LastPlayerReload = Date.now();
+                        // Hard reload when buffer may be dirty from strip or m3u8 modification —
+                        // soft reload preserves the existing MediaSource buffer, and any
+                        // timestamp weirdness from strip/BLANK_MP4/recovery injection persists
+                        // across it, causing audio/video desync over time.
+                        postStreamMessage(streamInfo, {
+                            key: 'ReloadPlayer',
+                            kind: 'early'
+                        });
+                    } else {
+                        if (tooSoonSinceLastReload) {
+                            console.log('[AD DEBUG] Skipping reload — last reload was ' + ((Date.now() - streamInfo.LastPlayerReload) / 1000).toFixed(0) + 's ago (cooldown: ' + effectiveCooldown + 's' + (recentReloads >= 3 ? ', auto-escalated from ' + recentReloads + ' reloads in 5min' : '') + ')');
+                        }
+                        postStreamMessage(streamInfo, {
+                            key: 'PauseResumePlayer'
+                        });
+                    }
                 }
-                }// end else (non-CSAI path)
             }
         }
         postStreamMessage(streamInfo, {
@@ -3249,11 +3227,6 @@
         if (lsRecoverFromSilentMute === 'false') {
             RecoverFromSilentMute = false;
             console.log('[AD DEBUG] RecoverFromSilentMute disabled via localStorage — hard-reload backstop respects already-muted state, mid-session manual mutes preserved across reloads');
-        }
-        const lsSoftReloadNoStrip = localStorage.getItem('twitchAdSolutions_softReloadNoStrip');
-        if (lsSoftReloadNoStrip === 'false') {
-            SoftReloadNoStrip = false;
-            console.log('[AD DEBUG] SoftReloadNoStrip disabled via localStorage — post-ad reload always hard, even on no-strip CSAI breaks (issue #129)');
         }
         const lsDisablePostBreakWedge = localStorage.getItem('twitchAdSolutions_disablePostBreakWedge');
         if (lsDisablePostBreakWedge === 'true') {

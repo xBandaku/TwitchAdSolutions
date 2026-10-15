@@ -1,7 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const vm = require('node:vm');
-const { readScript, scriptNodes } = require('./scripts');
+const { readScript, createScriptContext } = require('./scripts');
 
 const files = ['vaft/vaft.user.js', 'vaft/vaft-ublock-origin.js'];
 const clean = '#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:100\n#EXTINF:2.000,live\nhttps://fixture.invalid/live.ts\n';
@@ -18,17 +17,13 @@ function registerStream(context, values = {}) {
 }
 
 function harness(file, bindings = {}) {
-    const source = readScript(file);
-    const declarations = scriptNodes(source).filter(node => node.type === 'FunctionDeclaration');
     const messages = [];
-    const context = vm.createContext({
+    const context = createScriptContext(readScript(file), {
         console: { log() {}, error() {} }, URL, Request, Response, Headers, Blob,
         AbortController, DOMException, Uint8Array, atob, setTimeout, clearTimeout,
         postMessage: message => messages.push(message),
         ...bindings
     });
-    vm.runInContext(declarations.map(node => source.slice(node.start, node.end)).join('\n'), context);
-    context.declareOptions(context);
     return { context, messages };
 }
 
@@ -73,6 +68,51 @@ function recoveryHarness(file) {
 }
 
 for (const file of files) {
+    test(file + ' keeps early reload budgets on sticky and backup-search paths', async () => {
+        for (const sticky of [false, true]) {
+            for (const [cacheSize, threshold, expected] of [[0, 3, 2], [3, 3, 1], [0, 0, 0]]) {
+                const { context, messages } = harness(file);
+                context.BackupPlayerTypes = [];
+                context.PreferLowQualityBackup = false;
+                context.EarlyReloadPollThreshold = threshold;
+                const { url, stream } = registerStream(context, {
+                    IsShowingAd: true, CsaiOnlyThisBreak: sticky,
+                    RecoverySegments: Array.from({ length: cacheSize }, (_, index) => ({
+                        extinf: '#EXTINF:2.000,live', url: 'https://fixture.invalid/cached-' + index + '.ts'
+                    }))
+                });
+                const ads = '#EXTM3U\n#EXT-X-DATERANGE:CLASS="twitch-stitched-ad",TYPE="MIDROLL"\n#EXT-X-MEDIA-SEQUENCE:100\n#EXTINF:2.000,ad\nhttps://fixture.invalid/stitched-ad.ts\n';
+                for (let poll = 0; poll < 5; poll++) await context.processM3U8(url, ads, null);
+                const reloads = messages.filter(message => message.key === 'ReloadPlayer');
+                assert.equal(reloads.length, expected, 'sticky=' + sticky + ', cache=' + cacheSize + ', threshold=' + threshold);
+                assert.equal(stream.EarlyReloadCount, expected);
+                assert.ok(reloads.every(message => message.kind === 'early'));
+            }
+        }
+    });
+
+    test(file + ' preserves post-ad actions for backups, stripping and cycle rescue', async () => {
+        for (const [values, expected] of [
+            [{}, null],
+            [{ LastCommittedBackupPlayerType: 'autoplay' }, 'ReloadPlayer'],
+            [{ NumStrippedAdSegments: 4 }, 'ReloadPlayer'],
+            [{ NumStrippedAdSegments: 4, CycleRescuedThisBreak: true, TotalAllStrippedPolls: 2 }, 'PauseResumePlayer'],
+            [{ NumStrippedAdSegments: 4, CycleRescuedThisBreak: true, TotalAllStrippedPolls: 3 }, 'ReloadPlayer']
+        ]) {
+            const { context, messages } = harness(file);
+            const { url, stream } = registerStream(context, {
+                IsShowingAd: true, HasConfirmedAdAttrs: true, CleanPlaylistCount: 2, ...values
+            });
+            await context.processM3U8(url, clean, null);
+            const actions = messages.filter(message => ['ReloadPlayer', 'PauseResumePlayer'].includes(message.key));
+            assert.deepEqual(actions.map(message => message.key), expected ? [expected] : []);
+            if (expected === 'ReloadPlayer') assert.equal(actions[0].kind, 'early');
+            assert.equal(stream.IsShowingAd, false);
+            assert.equal(stream.PendingAdEndAt, 0);
+            assert.equal(stream.LastCleanSignature, null);
+        }
+    });
+
     test(file + ' honors post-ad buffer resets despite healthy playback signals', async () => {
         for (const stripped of [false, true]) {
             for (const ios of [false, true]) {

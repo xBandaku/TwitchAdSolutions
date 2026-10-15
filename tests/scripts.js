@@ -33,14 +33,19 @@ function scriptNodes(source) {
     return nodes;
 }
 
+function createScriptContext(source, bindings = {}, nodes = scriptNodes(source)) {
+    const declarations = nodes.filter(node => node.type === 'FunctionDeclaration');
+    const context = vm.createContext(bindings);
+    vm.runInContext(declarations.map(node => source.slice(node.start, node.end)).join('\n'), context);
+    vm.runInContext('declareOptions(globalThis)', context);
+    return context;
+}
+
 function serializedWorker(source) {
     const nodes = scriptNodes(source);
     const template = nodes.find(node => node.type === 'VariableDeclarator' && node.id.name === 'newBlobStr').init;
-    const declarations = nodes.filter(node => node.type === 'FunctionDeclaration');
-    const context = vm.createContext({ console, URL, twitchBlobUrl: 'blob:https://www.twitch.tv/fixture' });
-    vm.runInContext(declarations.map(node => source.slice(node.start, node.end)).join('\n'), context);
-    vm.runInContext('declareOptions(globalThis)', context);
+    const context = createScriptContext(source, { console, URL, twitchBlobUrl: 'blob:https://www.twitch.tv/fixture' }, nodes);
     return vm.runInContext(source.slice(template.start, template.end), context);
 }
 
-module.exports = { root, scripts, readScript, scriptNodes, serializedWorker };
+module.exports = { root, scripts, readScript, scriptNodes, createScriptContext, serializedWorker };

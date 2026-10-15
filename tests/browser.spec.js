@@ -162,6 +162,54 @@ test.afterEach(async ({ page }, testInfo) => {
 
 for (const script of scripts) {
     if (script.file.startsWith('vaft/vaft')) {
+        test(script.file + ' runs shared recovery helpers inside the injected worker', async ({ page, context }) => {
+            await boot(page, context, script.file);
+            const result = await page.evaluate(async () => {
+                const source = `
+                    (async () => {
+                        try {
+                            const results = [];
+                            BackupPlayerTypes = [];
+                            PreferLowQualityBackup = false;
+                            for (const sticky of [false, true]) {
+                                AdSegmentCache.clear();
+                                const messages = [];
+                                postStreamMessage = (stream, message) => messages.push(message);
+                                const stream = createStreamInfo('fixture-channel', '', '');
+                                const url = 'https://www.twitch.tv/fixtures/recovery.m3u8';
+                                stream.IsShowingAd = true;
+                                stream.CsaiOnlyThisBreak = sticky;
+                                stream.HasConfirmedAdAttrs = true;
+                                stream.Urls[url] = { Resolution: '1920x1080', FrameRate: 60, Codecs: 'avc1.4d4028' };
+                                StreamInfos['fixture-channel'] = stream;
+                                StreamInfosByUrl[url] = stream;
+                                ActiveStreamInfo = stream;
+                                const ads = '#EXTM3U\\n#EXT-X-DATERANGE:CLASS="twitch-stitched-ad",TYPE="MIDROLL"\\n#EXT-X-MEDIA-SEQUENCE:100\\n#EXTINF:2.000,ad\\nhttps://www.twitch.tv/fixtures/stitched-ad.ts\\n';
+                                for (let poll = 0; poll < 5; poll++) await processM3U8(url, ads, null);
+                                const early = messages.filter(message => message.key === 'ReloadPlayer').length;
+                                for (let sequence = 101; sequence <= 103; sequence++) {
+                                    await processM3U8(url, '#EXTM3U\\n#EXT-X-MEDIA-SEQUENCE:' + sequence + '\\n#EXTINF:2.000,live\\nhttps://www.twitch.tv/fixtures/live-' + sequence + '.ts\\n', null);
+                                }
+                                results.push({ sticky, early, total: messages.filter(message => message.key === 'ReloadPlayer').length,
+                                    closed: !stream.IsShowingAd, pending: stream.PendingAdEndAt, signature: stream.LastCleanSignature });
+                            }
+                            self.postMessage({ fixture: true, results });
+                        } catch (error) { self.postMessage({ fixture: true, error: error.message }); }
+                    })();
+                `;
+                const worker = new Worker(URL.createObjectURL(new Blob([source], { type: 'text/javascript' })));
+                try {
+                    return await new Promise((resolve, reject) => {
+                        worker.addEventListener('message', event => { if (event.data.fixture) resolve(event.data); });
+                        worker.addEventListener('error', event => reject(new Error(event.message)), { once: true });
+                    });
+                } finally { worker.terminate(); }
+            });
+            expect(result).toEqual({ fixture: true, results: [false, true].map(sticky => ({
+                sticky, early: 2, total: 3, closed: true, pending: 0, signature: null
+            })) });
+        });
+
         test(script.file + ' honors a worker hard reset near the native live edge', async ({ page, context }) => {
             await bootRecovery(page, context, script.file);
             await page.evaluate(() => { window.__recoveryFixture.current.video.currentTime = 17; });

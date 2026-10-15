@@ -105,6 +105,8 @@ npx playwright install
 npm run test:browser
 ```
 
+Run `npm run benchmark` for timings against the current vaft functions. Strip measurements include stream setup and cache reset.
+
 Checks cover syntax, metadata, matching userscript/uBlock logic, serialized workers, and runtime regressions. Packaging writes the supported scripts and SHA256SUMS to `release-artifact/`.
 
 Browser tests use offline Twitch pages in Chromium, Firefox, and WebKit. Recovery fixtures use native media with simulated player and PiP state. Windows WebKit skips the PCM media cases; Linux CI runs them. Live ad delivery and extension installation need manual testing.

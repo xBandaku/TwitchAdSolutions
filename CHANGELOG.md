@@ -1,5 +1,10 @@
 ## Unreleased
 
+- Share early-reload budget checks and ad-end tracking resets between vaft worker paths. Remove the unreachable soft-reload branch and its ineffective configuration option. Keep existing reload decisions and limits.
+- Share script-function loading across the Node tests, worker validation and benchmark. Benchmark the current vaft source instead of copied historical implementations; run it with `npm run benchmark`.
+- Remove the obsolete comparison document, which described retired testing scripts and older upstream versions.
+- Add coverage for shared reload decisions, post-ad actions and helper execution inside injected browser workers.
+
 ## v68.5.23 (2026-10-15)
 
 ### Project cleanup

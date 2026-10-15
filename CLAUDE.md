@@ -4,7 +4,7 @@ Fork of ryanbr/TwitchAdSolutions, originally based on pixeltris/TwitchAdSolution
 
 ## Worker Blob Serialization (CRITICAL)
 
-Functions serialized via `.toString()` into the Web Worker blob CANNOT reference outer-scope variables. This includes: `processM3U8`, `stripAdSegments`, `hookWorkerFetch`, `getAccessToken`, `gqlRequest`, `hasAdTags`, `getMatchedAdSignifiers`, `notifyAdComplete`, `getStreamUrlForResolution`, `parseAttributes`, `getServerTimeFromM3u8`, `replaceServerTimeInM3u8`, `pruneStreamInfos`, `createStreamInfo`, `getWasmWorkerJs`, `videoCodecFamily`.
+Functions serialized via `.toString()` into the Web Worker blob CANNOT reference outer-scope variables. This includes: `processM3U8`, `stripAdSegments`, `hookWorkerFetch`, `getAccessToken`, `gqlRequest`, `hasAdTags`, `getMatchedAdSignifiers`, `notifyAdComplete`, `getStreamUrlForResolution`, `parseAttributes`, `getServerTimeFromM3u8`, `replaceServerTimeInM3u8`, `pruneStreamInfos`, `createStreamInfo`, `getWasmWorkerJs`, `videoCodecFamily`, `resetAdEndTracking`, `triggerEarlyReloadIfNeeded`.
 
 - Declare variables in `declareOptions()` (also serialized) or in the inline blob template literal
 - To pass window-scope values to the worker, inject after `declareOptions(self)`: e.g. `ReloadPlayerAfterAd = ${ReloadPlayerAfterAd};`
@@ -30,7 +30,7 @@ uBlock files have `twitch-videoad.js text/javascript` as line 1 (not valid JS �
 
 ## Versions
 
-Bump `@version` (userscript header) and `ourTwitchAdSolutionsVersion` together for functional changes. Current: vaft 68.5.23/109, video-swap-new 1.88/56, strip 1.10/27.
+Bump `@version` (userscript header) and `ourTwitchAdSolutionsVersion` together for functional changes. Current: vaft 68.5.24/110, video-swap-new 1.88/56, strip 1.10/27.
 
 ## localStorage Config
 
@@ -63,7 +63,7 @@ All read at init, injected into worker blob:
 - **Reload cap** — buffer monitor reloads at most once per recovery window (`recoveryReloadUsed`).
 - **Grace periods** — 15s after reload, 10s after backup switch. Buffer monitor skips fixes during these.
 - **Drift correction** — `startDriftCorrection(videoElement)` shared function. 1.1× playback rate, 30s safety timeout. Restarts fresh on re-entry (clears stale timers). Used by post-reload drift and buffer gap seek.
-- **Reload routing** — worker → main `ReloadPlayer` messages carry a `kind` field. `doTwitchPlayerTask(isPausePlay, isReload, reloadKind)` picks `setSrc` params: `kind === 'early'` → hard reload (`isNewMediaPlayerInstance: true, refreshAccessToken: true`, new session); otherwise soft reload. The two flags are **not** coupled: on Apple touch devices `iosSoftReload` downgrades `isNewMediaPlayerInstance` to false while `refreshAccessToken` stays true (v68.5.5 — not yet validated on a device). Early reload sites (both sticky + normal paths) send `kind: 'early'`; post-ad reload sites send `'post-ad'` when `SoftReloadNoStrip` is on and the break stripped nothing (v68.5.0), `'early'` otherwise. HEVC force reload stays soft (codec change, no strip involved). Hard reload flushes the MediaSource buffer — required after strip activity (BLANK_MP4 injection, recovery replay) to avoid audio/video desync from accumulated timestamp drift.
+- **Reload routing**: worker messages with kind early request a new player and fresh token. Required post-ad resets use early after stripping or committed backup playback. Other reload requests remain soft. Apple touch devices keep the existing player while refreshing the token. The reset flushes mixed-source media buffers.
 - **Early reload** — fires during prolonged all-stripped freeze. Threshold: 3 polls (~6s), or 1 poll when recovery cache <3 segments (thin-cache fast path). Budget: `max(1, PodLength)` or `max(2, PodLength)` when thin. `EarlyReloadTriggered` resets on "still ads" (both sticky + normal paths) to allow budget-based re-fire. Override via `twitchAdSolutions_earlyReloadPollThreshold`.
 - **Sticky CSAI fast path** — once a break enters CSAI fast path (all segments live), stays on it for the whole break. Has its own early-reload trigger + `EarlyReloadAwaitingResult` check (normal-path check unreachable due to early return).
 - **Latency-aware reload health check**: optional reloads can be skipped when playback is within 7 seconds of live. Required `early` resets bypass this check because playback progress does not prove audio/video alignment. Unknown latency or values outside the 3600-second bound do not prevent a reload.
