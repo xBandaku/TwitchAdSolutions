@@ -93,7 +93,8 @@ async function bootRecovery(page, context, file) {
                 video, plays: 0, core: { state: { position: 10, bufferedPosition: 40 } },
                 getHTMLVideoElement: () => video, getBufferDuration: () => 30,
                 getState: () => video.paused ? 'Paused' : 'Playing', isPaused: () => video.paused,
-                pause() { video.pause(); }, play() { this.plays++; return video.play(); }
+                pause() { this.core.paused = true; video.pause(); },
+                play() { this.core.paused = false; this.plays++; return video.play(); }
             };
             fixture.players.push(player);
             owner.props.mediaPlayerInstance = player;
@@ -224,10 +225,10 @@ for (const script of scripts) {
                     window.__recoveryFixture.retainVideo = true;
                     await window.__recoveryFixture.reload('early');
                 });
-                await page.clock.runFor(2500);
+                if (reason === 'pause') await page.clock.runFor(150);
                 await page.evaluate(reason => {
                     const fixture = window.__recoveryFixture;
-                    if (reason === 'pause') fixture.current.video.pause();
+                    if (reason === 'pause') fixture.current.pause();
                     else fixture.pip = fixture.current.video;
                 }, reason);
                 await page.clock.runFor(6000);
