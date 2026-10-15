@@ -30,10 +30,10 @@ Fork of [ryanbr/TwitchAdSolutions](https://github.com/ryanbr/TwitchAdSolutions),
 ## 1. Install vaft (Violentmonkey)
 
 1. Install [Violentmonkey](https://violentmonkey.github.io/) in your browser.
-2. Open [vaft v68.5.8](https://github.com/xBandaku/TwitchAdSolutions/releases/download/v68.5.8/vaft.user.js) and confirm installation in Violentmonkey. If your browser downloads the file, import `vaft.user.js` through Violentmonkey's dashboard.
+2. Open the [latest stable vaft userscript](https://github.com/xBandaku/TwitchAdSolutions/releases/latest/download/vaft.user.js) and confirm installation in Violentmonkey. If your browser downloads the file, import `vaft.user.js` through Violentmonkey's dashboard.
 3. Reload any open Twitch stream.
 
-The [release notes](https://github.com/xBandaku/TwitchAdSolutions/releases/tag/v68.5.8) list the fixes and testing limits. For future stable updates, check the [latest release](https://github.com/xBandaku/TwitchAdSolutions/releases/latest).
+The [latest release notes](https://github.com/xBandaku/TwitchAdSolutions/releases/latest) list the fixes and testing limits.
 
 [Tampermonkey](https://www.tampermonkey.net/) and [Userscripts for Safari](https://apps.apple.com/us/app/userscripts/id1463298887) are other supported managers. Greasemonkey doesn't work with the scripts.
 
