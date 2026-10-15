@@ -59,6 +59,96 @@ async function boot(page, context, file, url = 'https://www.twitch.tv/fixture-ch
     return state;
 }
 
+async function bootRecovery(page, context, file) {
+    test.skip(process.platform === 'win32' && context.browser().browserType().name() === 'webkit',
+        'Windows WebKit cannot decode the PCM fixture; native-media recovery runs on Linux CI.');
+    await page.clock.install({ time: new Date(100000) });
+    await boot(page, context, file);
+    await page.evaluate(async () => {
+        const samples = 8000 * 20;
+        const wave = new Uint8Array(44 + samples * 2);
+        const view = new DataView(wave.buffer);
+        const label = (offset, text) => [...text].forEach((char, i) => { wave[offset + i] = char.charCodeAt(0); });
+        label(0, 'RIFF'); label(8, 'WAVE'); label(12, 'fmt '); label(36, 'data');
+        view.setUint32(4, wave.length - 8, true); view.setUint32(16, 16, true);
+        view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+        view.setUint32(24, 8000, true); view.setUint32(28, 16000, true);
+        view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+        view.setUint32(40, samples * 2, true);
+        let binary = '';
+        for (let offset = 0; offset < wave.length; offset += 32768) {
+            binary += String.fromCharCode(...wave.subarray(offset, offset + 32768));
+        }
+        // PCM audio exercises native media state without a hardware video decoder.
+        const src = 'data:audio/wav;base64,' + btoa(binary);
+        const fixture = window.__recoveryFixture = { reloads: [], players: [], fail: false, userMute: false, retainVideo: false, pip: null };
+        Object.defineProperty(document, 'pictureInPictureElement', { configurable: true, get: () => fixture.pip });
+        const owner = { setPlayerActive() {}, props: {} };
+        const makePlayer = video => {
+            video.src = src;
+            video.preload = 'auto';
+            video.volume = 0;
+            video.playsInline = true;
+            const player = {
+                video, plays: 0, core: { state: { position: 10, bufferedPosition: 40 } },
+                getHTMLVideoElement: () => video, getBufferDuration: () => 30,
+                getState: () => video.paused ? 'Paused' : 'Playing', isPaused: () => video.paused,
+                pause() { video.pause(); }, play() { this.plays++; return video.play(); }
+            };
+            fixture.players.push(player);
+            owner.props.mediaPlayerInstance = player;
+            fixture.current = player;
+            return player;
+        };
+        const initialVideo = document.querySelector('video');
+        makePlayer(initialVideo);
+        const state = {
+            props: { content: { type: 'live' } }, setInitialPlaybackSettings() {},
+            setSrc(options) {
+                fixture.reloads.push(options);
+                if (fixture.userMute) localStorage.setItem('video-muted', '{"default":true}');
+                if (fixture.fail) throw new Error('fixture reload failure');
+                if (fixture.retainVideo) return;
+                const replacement = document.createElement('video');
+                replacement.muted = true;
+                fixture.current.video.replaceWith(replacement);
+                makePlayer(replacement);
+            }
+        };
+        document.getElementById('root')._reactRootContainer = {
+            _internalRoot: { current: { child: { stateNode: owner, sibling: { stateNode: state } } } }
+        };
+        const ad = document.createElement('video');
+        ad.id = 'fixture-ad'; ad.muted = true; document.body.appendChild(ad);
+        const start = document.createElement('button');
+        start.id = 'fixture-start'; start.textContent = 'Start fixture';
+        start.onclick = () => initialVideo.play();
+        document.body.appendChild(start);
+        const source = `
+            self.addEventListener('message', event => {
+                if (!event.data.fixtureReload) return;
+                self.postMessage({ key: 'ReloadPlayer', kind: event.data.kind, channelName: 'fixture-channel', sessionId: 1 });
+                self.postMessage({ fixtureAck: true });
+            });
+            self.postMessage({ fixtureReady: true });
+        `;
+        const worker = new Worker(URL.createObjectURL(new Blob([source], { type: 'text/javascript' })));
+        await new Promise(resolve => worker.addEventListener('message', event => { if (event.data.fixtureReady) resolve(); }));
+        fixture.reload = kind => new Promise(resolve => {
+            const ack = event => {
+                if (!event.data.fixtureAck) return;
+                worker.removeEventListener('message', ack);
+                resolve();
+            };
+            worker.addEventListener('message', ack);
+            worker.postMessage({ fixtureReload: true, kind });
+        });
+    });
+    await expect.poll(() => page.evaluate(() => window.__recoveryFixture.current.video.readyState)).toBeGreaterThanOrEqual(2);
+    await page.locator('#fixture-start').click();
+    await expect.poll(() => page.evaluate(() => window.__recoveryFixture.current.video.paused)).toBe(false);
+}
+
 test.afterEach(async ({ page }, testInfo) => {
     const state = states.get(page);
     if (!state) return;
@@ -71,6 +161,82 @@ test.afterEach(async ({ page }, testInfo) => {
 
 for (const script of scripts) {
     if (script.file.startsWith('vaft/vaft')) {
+        for (const userMute of [false, true]) {
+            test(script.file + ' rolls back failed native-video recovery, user mute=' + userMute, async ({ page, context }) => {
+                await bootRecovery(page, context, script.file);
+                await page.evaluate(async userMute => {
+                    const fixture = window.__recoveryFixture;
+                    fixture.fail = true;
+                    fixture.userMute = userMute;
+                    await fixture.reload('early');
+                }, userMute);
+                await page.clock.runFor(5500);
+                expect(await page.evaluate(() => ({
+                    muted: window.__recoveryFixture.current.video.muted,
+                    paused: window.__recoveryFixture.current.video.paused,
+                    reloads: window.__recoveryFixture.reloads.length,
+                    adMuted: document.getElementById('fixture-ad').muted
+                }))).toEqual({ muted: userMute, paused: false, reloads: 1, adMuted: true });
+            });
+        }
+
+        test(script.file + ' resumes and unmutes the replacement native video', async ({ page, context }) => {
+            await bootRecovery(page, context, script.file);
+            await page.evaluate(() => window.__recoveryFixture.reload('early'));
+            await expect.poll(() => page.evaluate(() => window.__recoveryFixture.current.video.readyState)).toBeGreaterThanOrEqual(2);
+            // Start near the finite fixture's edge so live catch-up does not seek to its end.
+            await page.evaluate(() => { window.__recoveryFixture.current.video.currentTime = 17; });
+            await expect.poll(() => page.evaluate(() => window.__recoveryFixture.current.video.readyState)).toBeGreaterThanOrEqual(2);
+            await page.clock.runFor(150);
+            await expect.poll(() => page.evaluate(() => window.__recoveryFixture.current.video.currentTime)).toBeGreaterThan(17.2);
+            await page.clock.runFor(3000);
+            expect(await page.evaluate(() => {
+                const fixture = window.__recoveryFixture;
+                return { native: fixture.current.video instanceof HTMLVideoElement,
+                    muted: fixture.current.video.muted, paused: fixture.current.video.paused,
+                    originalPlays: fixture.players[0].plays, replacementPlays: fixture.current.plays,
+                    originalConnected: fixture.players[0].video.isConnected,
+                    reloads: fixture.reloads.length, adMuted: document.getElementById('fixture-ad').muted };
+            })).toEqual({ native: true, muted: false, paused: false, originalPlays: 0, replacementPlays: 1, originalConnected: false, reloads: 1, adMuted: true });
+        });
+
+        test(script.file + ' upgrades overlapping soft and hard browser recovery', async ({ page, context }) => {
+            await bootRecovery(page, context, script.file);
+            await page.evaluate(async () => {
+                window.reloadTwitchPlayer();
+                await window.__recoveryFixture.reload('early');
+            });
+            await page.clock.runFor(150);
+            expect(await page.evaluate(() => window.__recoveryFixture.reloads)).toEqual([
+                { isNewMediaPlayerInstance: false, refreshAccessToken: false },
+                { isNewMediaPlayerInstance: true, refreshAccessToken: true }
+            ]);
+            await page.evaluate(() => window.__recoveryFixture.reload('early'));
+            await page.clock.runFor(13000);
+            expect(await page.evaluate(() => window.__recoveryFixture.reloads.length)).toBe(2);
+        });
+
+        for (const reason of ['pause', 'pip']) {
+            test(script.file + ' cancels native-video recovery for ' + reason, async ({ page, context }) => {
+                await bootRecovery(page, context, script.file);
+                await page.clock.runFor(600);
+                await page.evaluate(async () => {
+                    window.__recoveryFixture.retainVideo = true;
+                    await window.__recoveryFixture.reload('early');
+                });
+                await page.clock.runFor(2500);
+                await page.evaluate(reason => {
+                    const fixture = window.__recoveryFixture;
+                    if (reason === 'pause') fixture.current.video.pause();
+                    else fixture.pip = fixture.current.video;
+                }, reason);
+                await page.clock.runFor(6000);
+                expect(await page.evaluate(() => ({ muted: window.__recoveryFixture.current.video.muted,
+                    paused: window.__recoveryFixture.current.video.paused, reloads: window.__recoveryFixture.reloads.length })))
+                    .toEqual({ muted: false, paused: reason === 'pause', reloads: 1 });
+            });
+        }
+
         test(script.file + ' handles optional GQL headers and v2 worker playlist failures', async ({ page, context }) => {
             await boot(page, context, script.file);
             const result = await page.evaluate(async () => {
