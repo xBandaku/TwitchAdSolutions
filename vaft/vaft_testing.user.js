@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TwitchAdSolutions (vaft-testing)
 // @namespace    https://github.com/ryanbr/TwitchAdSolutions
-// @version      684.0.0
+// @version      685.0.0
 // @description  Multiple solutions for blocking Twitch ads (vaft testing variant)
 // @updateURL    https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft_testing.user.js
 // @downloadURL  https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft_testing.user.js
@@ -48,7 +48,7 @@
         }
     }
     'use strict';
-    const ourTwitchAdSolutionsVersion = 684;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 685;// Used to prevent conflicts with outdated versions of the scripts
     console.log('[AD DEBUG] TwitchAdSolutions vaft-testing v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
         console.log('[AD DEBUG] CONFLICT: vaft-testing v' + ourTwitchAdSolutionsVersion + ' skipped — another script already active (v' + window.twitchAdSolutionsVersion + '). Remove duplicate scripts.');
@@ -111,7 +111,10 @@
         scope.PlayerReloadMinimalRequestsTime = 1500;
         scope.PlayerReloadMinimalRequestsPlayerIndex = 2;//autoplay
         scope.HasTriggeredPlayerReload = false;
-        scope.StreamInfos = [];
+        scope.ActiveStreamInfo = null;
+        scope.MasterRequestSequence = 0;
+        scope.StreamSessionSequence = 0;
+        scope.StreamInfos = Object.create(null);
         scope.StreamInfosByUrl = [];
         scope.GQLDeviceID = null;
         scope.ClientVersion = null;
@@ -146,6 +149,11 @@
         return {
             // Identity
             ChannelName: channelName,
+            SessionId: ++StreamSessionSequence,
+            PlaylistRequestSequence: 0,
+            LastPlaylistRequest: new Map(),
+            LastProcessedPlaylist: new Map(),
+            ProcessingQueue: Promise.resolve(),
             EncodingsM3U8: encodingsM3u8,
             UsherParams: usherParams,
             // Resolutions / URL map
@@ -342,6 +350,8 @@
                     ${videoCodecFamily.toString()}
                     ${getStreamUrlForResolution.toString()}
                     ${processM3U8.toString()}
+                    ${processStreamPlaylist.toString()}
+                    ${postStreamMessage.toString()}
                     ${hookWorkerFetch.toString()}
                     ${declareOptions.toString()}
                     ${fetchPlaylist.toString()}
@@ -459,7 +469,11 @@
                 }
                 twitchWorkers.length = 0;
                 twitchWorkers.push(this);
+                let latestStreamSession = 0;
                 this.addEventListener('message', (e) => {
+                    if (!isCurrentStreamMessage(this, e.data)) return;
+                    if (e.data.sessionId < latestStreamSession) return;
+                    if (e.data.sessionId) latestStreamSession = e.data.sessionId;
                     if (e.data.key == 'UpdateAdBlockBanner') {
                         updateAdblockBanner(e.data);
                         // Track backup stream switches (start and end of ad break)
@@ -484,9 +498,11 @@
                     }
                 });
                 this.addEventListener('message', async event => {
+                    if (!twitchWorkers.includes(this)) return;
                     if (event.data.key == 'FetchRequest') {
                         const fetchRequest = event.data.value;
                         const responseData = await handleWorkerFetchRequest(fetchRequest);
+                        if (!twitchWorkers.includes(this)) return;
                         this.postMessage({
                             key: 'FetchResponse',
                             value: responseData
@@ -510,7 +526,7 @@
                 // empties after a quiet period, so an isolated later crash still recovers.
                 let crashed = false;
                 this.addEventListener('error', (e) => {
-                    if (crashed) return;
+                    if (crashed || !twitchWorkers.includes(this)) return;
                     crashed = true;
                     const now = Date.now();
                     const crashTimes = (playerBufferState.ivsCrashTimes = (playerBufferState.ivsCrashTimes || []).filter(t => now - t < 60000));
@@ -540,6 +556,13 @@
                 }
             }
         });
+    }
+    function isCurrentStreamMessage(worker, message) {
+        if (!twitchWorkers.includes(worker)) return false;
+        if (!message?.channelName) return true;
+        const url = new URL(window.location.href);
+        const channelName = url.hostname === 'player.twitch.tv' ? url.searchParams.get('channel') : url.pathname.split('/')[1];
+        return channelName?.toLowerCase() === message.channelName.toLowerCase();
     }
     function getWasmWorkerJs(twitchBlobUrl) {
         const req = new XMLHttpRequest();
@@ -583,10 +606,12 @@
                 }
                 url = url.trimEnd();
                 if (!parsedRequestUrl.pathname.includes('/channel/hls/') && (StreamInfosByUrl[url] || parsedRequestUrl.pathname.endsWith('.m3u8'))) {
+                    const requestedStream = StreamInfosByUrl[url];
+                    const requestId = requestedStream ? ++requestedStream.PlaylistRequestSequence : 0;
                     return new Promise(function(resolve, reject) {
                         const processAfter = async function(response) {
                             if (response.status === 200) {
-                                resolve(new Response(await processM3U8(url, await response.text(), realFetch)));
+                                resolve(new Response(await processM3U8(url, await response.text(), realFetch, requestId, requestedStream)));
                             } else {
                                 resolve(response);
                             }
@@ -601,6 +626,8 @@
                     V2API = url.includes('/api/v2/');
                     const parsedUrl = new URL(url);
                     const channelName = parsedUrl.pathname.match(/([^\/]+)(?=\.\w+$)/)?.[0];
+                    const masterRequestId = ++MasterRequestSequence;
+                    if (ActiveStreamInfo?.ChannelName !== channelName) ActiveStreamInfo = null;
                     if (ForceAccessTokenPlayerType) {
                         // parent_domains is used to determine if the player is embeded and stripping it gets rid of fake ads
                         parsedUrl.searchParams.delete('parent_domains');
@@ -617,11 +644,13 @@
                                 }
                                 const encodingsM3u8 = masterLines.join('\n');
                                 const serverTime = getServerTimeFromM3u8(encodingsM3u8);
+                                if (masterRequestId !== MasterRequestSequence) { resolve(new Response(encodingsM3u8)); return; }
                                 let streamInfo = StreamInfos[channelName];
                                 if (streamInfo != null && streamInfo.EncodingsM3U8 != null && (streamInfo.ResolutionList.length === 0 || !(await fetchPlaylist(streamInfo.ResolutionList[0].Url, realFetch, BackupRequestTimeout, true)))) {
                                     // The cached encodings are dead (the stream probably restarted)
                                     streamInfo = null;
                                 }
+                                if (masterRequestId !== MasterRequestSequence) { resolve(new Response(encodingsM3u8)); return; }
                                 if (streamInfo == null || streamInfo.EncodingsM3U8 == null) {
                                     console.log('[AD DEBUG] New stream session — channel: ' + channelName + ', API: ' + (V2API ? 'v2' : 'v1'));
                                     StreamInfos[channelName] = streamInfo = createStreamInfo(channelName, encodingsM3u8, parsedUrl.search);
@@ -708,6 +737,7 @@
                                 // first end-of-break reload of every new channel to be blocked by
                                 // cooldown — the cooldown check treated the session-creation timestamp
                                 // as a recent reload, even though no reload had actually occurred.
+                                ActiveStreamInfo = streamInfo;
                                 resolve(new Response(replaceServerTimeInM3u8(streamInfo.IsUsingModifiedM3U8 ? streamInfo.ModifiedM3U8 : streamInfo.EncodingsM3U8, serverTime)));
                             } else {
                                 resolve(response);
@@ -1185,8 +1215,32 @@
         return fallbackClosestUrl;
     }
     // Core ad-blocking logic: detect ads in m3u8, fetch backup streams, strip ad segments
-    async function processM3U8(url, textStr, realFetch) {
-        const streamInfo = StreamInfosByUrl[url];
+    function processM3U8(url, textStr, realFetch, requestId = 0, requestedStream = StreamInfosByUrl[url]) {
+        const streamInfo = requestedStream;
+        if (!streamInfo) return Promise.resolve(textStr);
+        const process = async () => {
+            if (StreamInfos[streamInfo.ChannelName] !== streamInfo || ActiveStreamInfo !== streamInfo) {
+                return stripAdSegments(textStr, false, streamInfo);
+            }
+            if (requestId && requestId < (streamInfo.LastPlaylistRequest.get(url) || 0)) {
+                return streamInfo.LastProcessedPlaylist.get(url);
+            }
+            const result = await processStreamPlaylist(url, textStr, realFetch, streamInfo);
+            streamInfo.LastPlaylistRequest.set(url, requestId);
+            streamInfo.LastProcessedPlaylist.set(url, result);
+            return result;
+        };
+        // A failed poll must reject its caller without preventing later polls from running.
+        const task = streamInfo.ProcessingQueue.then(process, process);
+        streamInfo.ProcessingQueue = task;
+        return task;
+    }
+    function postStreamMessage(streamInfo, message) {
+        if (StreamInfos[streamInfo.ChannelName] === streamInfo && ActiveStreamInfo === streamInfo) {
+            postMessage({ ...message, channelName: streamInfo.ChannelName, sessionId: streamInfo.SessionId });
+        }
+    }
+    async function processStreamPlaylist(url, textStr, realFetch, streamInfo) {
         if (!streamInfo) {
             return textStr;
         }
@@ -1242,7 +1296,7 @@
                 streamInfo.FreezeStartedAt = 0;
                 streamInfo.CycleRescuedThisBreak = false;
                 console.log('[AD DEBUG] Ad detected — type: ' + (streamInfo.IsMidroll ? 'midroll' : 'preroll') + ', channel: ' + streamInfo.ChannelName + ', pod: ' + podLength + ' ad(s) (~' + (podLength * 30) + 's expected), signifiers: ' + getMatchedAdSignifiers(textStr).join(', '));
-                postMessage({
+                postStreamMessage(streamInfo, {
                     key: 'UpdateAdBlockBanner',
                     isMidroll: streamInfo.IsMidroll,
                     hasAds: streamInfo.IsShowingAd,
@@ -1290,7 +1344,7 @@
             if (((isEnhanced && !SkipPlayerReloadOnHevc) || AlwaysReloadPlayerOnAd) && streamInfo.ModifiedM3U8 && !streamInfo.IsUsingModifiedM3U8 && !recentlyReloaded) {
                 streamInfo.IsUsingModifiedM3U8 = true;
                 streamInfo.LastPlayerReload = Date.now();
-                postMessage({
+                postStreamMessage(streamInfo, {
                     key: 'ReloadPlayer'
                 });
             }
@@ -1339,9 +1393,9 @@
                     streamInfo.EarlyReloadAtPoll = streamInfo.TotalAllStrippedPolls || streamInfo.ConsecutiveAllStrippedPolls;
                     const stickyReason = stickyRecoveryThin ? ' (thin recovery cache: ' + (streamInfo.RecoverySegments?.length || 0) + ' segments)' : '';
                     console.log('[AD DEBUG] Early reload triggered (sticky path) — ' + streamInfo.ConsecutiveAllStrippedPolls + ' consecutive all-stripped polls' + stickyReason + ' [' + streamInfo.EarlyReloadCount + '/' + stickyMaxEarlyReloads + ']');
-                    postMessage({ key: 'ReloadPlayer', kind: 'early' });
+                    postStreamMessage(streamInfo, { key: 'ReloadPlayer', kind: 'early' });
                 }
-                postMessage({
+                postStreamMessage(streamInfo, {
                     key: 'UpdateAdBlockBanner',
                     isMidroll: streamInfo.IsMidroll,
                     hasAds: streamInfo.IsShowingAd,
@@ -1374,7 +1428,7 @@
                 if (IsAdStrippingEnabled) {
                     textStr = stripAdSegments(textStr, false, streamInfo, isEnhanced);
                 }
-                postMessage({
+                postStreamMessage(streamInfo, {
                     key: 'UpdateAdBlockBanner',
                     isMidroll: streamInfo.IsMidroll,
                     hasAds: streamInfo.IsShowingAd,
@@ -1692,7 +1746,7 @@
                 streamInfo.EarlyReloadAtPoll = streamInfo.TotalAllStrippedPolls || streamInfo.ConsecutiveAllStrippedPolls;
                 const reason = recoveryThin ? ' (thin recovery cache: ' + (streamInfo.RecoverySegments?.length || 0) + ' segments)' : '';
                 console.log('[AD DEBUG] Early reload triggered — ' + streamInfo.ConsecutiveAllStrippedPolls + ' consecutive all-stripped polls' + reason + ' [' + streamInfo.EarlyReloadCount + '/' + maxEarlyReloads + ']');
-                postMessage({ key: 'ReloadPlayer', kind: 'early' });
+                postStreamMessage(streamInfo, { key: 'ReloadPlayer', kind: 'early' });
             }
         } else if (streamInfo.IsShowingAd) {
             if (!streamInfo.PendingAdEndAt) {
@@ -1798,7 +1852,7 @@
                         streamInfo.LastPlayerReload = Date.now();
                         if (!streamInfo.ReloadTimestamps) streamInfo.ReloadTimestamps = [];
                         streamInfo.ReloadTimestamps.push(Date.now());
-                        postMessage({ key: 'ReloadPlayer', kind: 'early' });
+                        postStreamMessage(streamInfo, { key: 'ReloadPlayer', kind: 'early' });
                     }
                 } else {
                 // Skip end-of-break reload when cycle rescue handled the break cleanly:
@@ -1828,7 +1882,7 @@
                     streamInfo.ReloadTimestamps.push(Date.now());// Only track actual reloads, not skipped ones
                     streamInfo.IsUsingModifiedM3U8 = false;
                     streamInfo.LastPlayerReload = Date.now();
-                    postMessage({
+                    postStreamMessage(streamInfo, {
                         key: 'ReloadPlayer',
                         kind: reloadKind
                     });
@@ -1836,14 +1890,14 @@
                     if (tooSoonSinceLastReload) {
                         console.log('[AD DEBUG] Skipping reload — last reload was ' + ((Date.now() - streamInfo.LastPlayerReload) / 1000).toFixed(0) + 's ago (cooldown: ' + effectiveCooldown + 's' + (recentReloads >= 3 ? ', auto-escalated from ' + recentReloads + ' reloads in 5min' : '') + ')');
                     }
-                    postMessage({
+                    postStreamMessage(streamInfo, {
                         key: 'PauseResumePlayer'
                     });
                 }
                 }// end else (non-CSAI path)
             }
         }
-        postMessage({
+        postStreamMessage(streamInfo, {
             key: 'UpdateAdBlockBanner',
             isMidroll: streamInfo.IsMidroll,
             hasAds: streamInfo.IsShowingAd,

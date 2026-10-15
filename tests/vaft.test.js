@@ -13,6 +13,7 @@ function registerStream(context, values = {}) {
     stream.Urls[url] = { Resolution: '1920x1080', FrameRate: 60, Codecs: 'avc1.4d4028' };
     context.StreamInfosByUrl[url] = stream;
     context.StreamInfos.fixture = stream;
+    context.ActiveStreamInfo = stream;
     return { url, stream };
 }
 
@@ -32,6 +33,49 @@ function harness(file, bindings = {}) {
 }
 
 for (const file of files) {
+    test(file + ' orders playlist state updates and discards obsolete responses', async () => {
+        const { context } = harness(file);
+        const { url, stream } = registerStream(context);
+        const seen = [];
+        let release;
+        context.processStreamPlaylist = async (url, text) => {
+            seen.push(text);
+            if (text === 'first') await new Promise(resolve => { release = resolve; });
+            if (text === 'error') throw new Error('fixture error');
+            return 'processed ' + text;
+        };
+        const first = context.processM3U8(url, 'first', null, 1, stream);
+        await new Promise(setImmediate);
+        const second = context.processM3U8(url, 'second', null, 2, stream);
+        assert.deepEqual(seen, ['first']);
+        release();
+        assert.deepEqual(await Promise.all([first, second]), ['processed first', 'processed second']);
+        assert.equal(await context.processM3U8(url, 'late first', null, 1, stream), 'processed second');
+        await assert.rejects(context.processM3U8(url, 'error', null, 3, stream), /fixture error/);
+        assert.equal(await context.processM3U8(url, 'after error', null, 4, stream), 'processed after error');
+        registerStream(context);
+        const obsolete = await context.processM3U8(url, clean, null, 5, stream);
+        assert.match(obsolete, /#EXTM3U/);
+        assert.ok(!seen.includes(clean));
+    });
+
+    test(file + ' rejects replaced-worker and wrong-channel messages and accepts embeds', () => {
+        const worker = {}, replaced = {};
+        const window = { location: { href: 'https://www.twitch.tv/fixture' } };
+        const { context, messages } = harness(file, { window, twitchWorkers: [worker] });
+        const { stream } = registerStream(context);
+        assert.equal(context.isCurrentStreamMessage(worker, { channelName: 'fixture' }), true);
+        assert.equal(context.isCurrentStreamMessage(replaced, { channelName: 'fixture' }), false);
+        assert.equal(context.isCurrentStreamMessage(worker, { channelName: 'old' }), false);
+        window.location.href = 'https://player.twitch.tv/?channel=fixture&parent=fixture.invalid';
+        assert.equal(context.isCurrentStreamMessage(worker, { channelName: 'fixture' }), true);
+        context.postStreamMessage(stream, { key: 'ReloadPlayer' });
+        assert.equal(messages.length, 1);
+        registerStream(context);
+        context.postStreamMessage(stream, { key: 'ReloadPlayer' });
+        assert.equal(messages.length, 1);
+    });
+
     test(file + ' times out backup headers and bodies and rejects invalid playlists', async () => {
         const timers = new Map();
         let id = 0;
