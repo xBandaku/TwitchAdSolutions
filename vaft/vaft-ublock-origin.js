@@ -37,7 +37,7 @@ twitch-videoad.js text/javascript
         }
     }
     'use strict';
-    const ourTwitchAdSolutionsVersion = 101;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 102;// Used to prevent conflicts with outdated versions of the scripts
     console.log('[AD DEBUG] TwitchAdSolutions vaft v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
         console.log('[AD DEBUG] CONFLICT: vaft v' + ourTwitchAdSolutionsVersion + ' skipped — another script already active (v' + window.twitchAdSolutionsVersion + '). Remove duplicate scripts.');
@@ -161,6 +161,10 @@ twitch-videoad.js text/javascript
             PodLength: 1,
             HasConfirmedAdAttrs: false,
             CleanPlaylistCount: 0,
+            LastCandidateCleanAt: 0,
+            LastCleanSequence: null,
+            LastCleanSignature: null,
+            HasAdvancedCleanPlaylist: false,
             PendingAdEndAt: 0,
             AdEndBounceCount: 0,
             ConsecutiveZeroStripBreaks: 0,
@@ -1207,10 +1211,14 @@ twitch-videoad.js text/javascript
             // so the slow-path max-wait gate can still fire when bouncing markers prevent
             // CleanPlaylistCount from reaching threshold. Mirrors TTV-AB v6.6.7 #1.
             const adEndStalenessMs = 12000;
-            if (streamInfo.PendingAdEndAt && (Date.now() - streamInfo.PendingAdEndAt) < adEndStalenessMs) {
+            if (streamInfo.PendingAdEndAt && (Date.now() - streamInfo.LastCandidateCleanAt) < adEndStalenessMs) {
                 streamInfo.AdEndBounceCount = (streamInfo.AdEndBounceCount || 0) + 1;
             } else {
                 streamInfo.PendingAdEndAt = 0;
+                streamInfo.LastCandidateCleanAt = 0;
+                streamInfo.LastCleanSequence = null;
+                streamInfo.LastCleanSignature = null;
+                streamInfo.HasAdvancedCleanPlaylist = false;
                 streamInfo.AdEndBounceCount = 0;
             }
             streamInfo.CleanPlaylistCount = 0;
@@ -1694,7 +1702,20 @@ twitch-videoad.js text/javascript
             if (!streamInfo.PendingAdEndAt) {
                 streamInfo.PendingAdEndAt = Date.now();
             }
-            streamInfo.CleanPlaylistCount++;
+            const sequenceMatch = textStr.match(/^#EXT-X-MEDIA-SEQUENCE:(\d+)/m);
+            const sequence = sequenceMatch ? Number(sequenceMatch[1]) : null;
+            const signature = textStr.split(/\r?\n/).filter(line => line && !line.startsWith('#')).join('\n');
+            const hadCleanPlaylist = streamInfo.LastCleanSignature !== null;
+            const advanced = sequence !== null && streamInfo.LastCleanSequence !== null
+                ? sequence > streamInfo.LastCleanSequence
+                : signature !== streamInfo.LastCleanSignature;
+            if (!hadCleanPlaylist || advanced) {
+                streamInfo.CleanPlaylistCount++;
+                streamInfo.LastCandidateCleanAt = Date.now();
+                streamInfo.HasAdvancedCleanPlaylist ||= hadCleanPlaylist && advanced;
+                streamInfo.LastCleanSequence = sequence;
+                streamInfo.LastCleanSignature = signature;
+            }
             // Check if the current playlist has live segments — if not, backup stream is dead
             const hasLiveSegments = textStr.includes(',live');
             // Independent slow-path max-wait escalation — ends the visible ad cycle even when
@@ -1704,8 +1725,8 @@ twitch-videoad.js text/javascript
             // ("Decoupled Slow-Path Recovery from Clean-Count").
             const adEndMaxWaitMs = 12000;
             const elapsedSinceCandidate = Date.now() - streamInfo.PendingAdEndAt;
-            const slowPathReady = streamInfo.PendingAdEndAt > 0 && elapsedSinceCandidate >= adEndMaxWaitMs;
-            // Require 3 consecutive clean polls before declaring ad-end. Previously only 1
+            const slowPathReady = streamInfo.PendingAdEndAt > 0 && elapsedSinceCandidate >= adEndMaxWaitMs && streamInfo.HasAdvancedCleanPlaylist;
+            // Require 3 advancing clean playlists before declaring ad-end. Previously only 1
             // when NumStrippedAdSegments === 0 (CSAI-only / backup-swap path) and 2 otherwise,
             // which let brief clean windows during ongoing breaks flip IsShowingAd false
             // prematurely on SSAI-uniform channels. TTV-AB hit the same false-positive at 2
@@ -1755,6 +1776,10 @@ twitch-videoad.js text/javascript
                 streamInfo.LoggedContamReorderThisBreak = false;
                 streamInfo.CleanPlaylistCount = 0;
                 streamInfo.PendingAdEndAt = 0;
+                streamInfo.LastCandidateCleanAt = 0;
+                streamInfo.LastCleanSequence = null;
+                streamInfo.LastCleanSignature = null;
+                streamInfo.HasAdvancedCleanPlaylist = false;
                 streamInfo.AdEndBounceCount = 0;
                 streamInfo.ConsecutiveAllStrippedPolls = 0;
                 streamInfo.EarlyReloadTriggered = false;

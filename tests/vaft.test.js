@@ -33,6 +33,41 @@ function harness(file, bindings = {}) {
 }
 
 for (const file of files) {
+    test(file + ' confirms advancing clean playlists and bounds marker bouncing', async () => {
+        let now = 100000;
+        const make = () => {
+            const { context } = harness(file, { Date: class extends Date { static now() { return now; } } });
+            context.BackupSwapFirst = false;
+            return { context, ...registerStream(context, { IsShowingAd: true, HasConfirmedAdAttrs: true }) };
+        };
+        const repeated = make();
+        for (let poll = 0; poll < 8; poll++) {
+            now += 2500;
+            await repeated.context.processM3U8(repeated.url, clean, null);
+        }
+        assert.equal(repeated.stream.IsShowingAd, true);
+        assert.equal(repeated.stream.CleanPlaylistCount, 1);
+        for (const sequence of [101, 102]) {
+            await repeated.context.processM3U8(repeated.url, clean.replace('SEQUENCE:100', 'SEQUENCE:' + sequence), null);
+        }
+        assert.equal(repeated.stream.IsShowingAd, false);
+        const bounced = make();
+        const start = now;
+        for (let poll = 0; poll <= 6; poll++) {
+            now = start + poll * 2500;
+            let text = clean.replace('SEQUENCE:100', 'SEQUENCE:' + (100 + poll));
+            if (poll % 2) text = text.replace('#EXT-X-TARGETDURATION', '#EXT-X-DATERANGE:CLASS="twitch-trigger"\n#EXT-X-TARGETDURATION');
+            await bounced.context.processM3U8(bounced.url, text, null);
+        }
+        assert.equal(bounced.stream.IsShowingAd, false);
+        const sustained = make();
+        await sustained.context.processM3U8(sustained.url, clean, null);
+        now += 13000;
+        await sustained.context.processM3U8(sustained.url, clean.replace('#EXT-X-TARGETDURATION', '#EXT-X-DATERANGE:CLASS="twitch-trigger"\n#EXT-X-TARGETDURATION'), null);
+        assert.equal(sustained.stream.PendingAdEndAt, 0);
+        assert.equal(sustained.stream.IsShowingAd, true);
+    });
+
     test(file + ' orders playlist state updates and discards obsolete responses', async () => {
         const { context } = harness(file);
         const { url, stream } = registerStream(context);

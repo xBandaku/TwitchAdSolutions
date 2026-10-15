@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Keep the first ad-end candidate alive across alternating markers, expire it only after clean playlist progress stops, and require advancing playlists for clean confirmations. Ports Antidrew distinct-playlist checks while keeping the three-confirmation threshold. Fixes #11.
+
 - Serialize playlist state updates per stream, ignore out-of-order responses, and prevent obsolete sessions or replaced workers from controlling the current player. Adapted Antidrew session guards for Twitch embeds.
 
 - Bound backup playlist requests to 4 seconds including response bodies, cap a full backup search at 8 seconds, validate HLS responses, and wait 3 seconds before retrying an exhausted search. Ported Antidrew backup deadlines and retry backoff.

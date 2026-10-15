@@ -37,7 +37,7 @@ twitch-videoad.js text/javascript
         }
     }
     'use strict';
-    const ourTwitchAdSolutionsVersion = 685;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 686;// Used to prevent conflicts with outdated versions of the scripts
     console.log('[AD DEBUG] TwitchAdSolutions vaft-testing v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
         console.log('[AD DEBUG] CONFLICT: vaft-testing v' + ourTwitchAdSolutionsVersion + ' skipped — another script already active (v' + window.twitchAdSolutionsVersion + '). Remove duplicate scripts.');
@@ -159,6 +159,10 @@ twitch-videoad.js text/javascript
             AdBreakStartedAt: 0,
             PodLength: 1,
             CleanPlaylistCount: 0,
+            LastCandidateCleanAt: 0,
+            LastCleanSequence: null,
+            LastCleanSignature: null,
+            HasAdvancedCleanPlaylist: false,
             PendingAdEndAt: 0,
             AdEndBounceCount: 0,
             ConsecutiveZeroStripBreaks: 0,
@@ -1254,10 +1258,14 @@ twitch-videoad.js text/javascript
         }
         if (haveAdTags) {
             const adEndStalenessMs = 12000;
-            if (streamInfo.PendingAdEndAt && (Date.now() - streamInfo.PendingAdEndAt) < adEndStalenessMs) {
+            if (streamInfo.PendingAdEndAt && (Date.now() - streamInfo.LastCandidateCleanAt) < adEndStalenessMs) {
                 streamInfo.AdEndBounceCount = (streamInfo.AdEndBounceCount || 0) + 1;
             } else {
                 streamInfo.PendingAdEndAt = 0;
+                streamInfo.LastCandidateCleanAt = 0;
+                streamInfo.LastCleanSequence = null;
+                streamInfo.LastCleanSignature = null;
+                streamInfo.HasAdvancedCleanPlaylist = false;
                 streamInfo.AdEndBounceCount = 0;
             }
             streamInfo.CleanPlaylistCount = 0;
@@ -1729,12 +1737,25 @@ twitch-videoad.js text/javascript
             if (!streamInfo.PendingAdEndAt) {
                 streamInfo.PendingAdEndAt = Date.now();
             }
-            streamInfo.CleanPlaylistCount++;
+            const sequenceMatch = textStr.match(/^#EXT-X-MEDIA-SEQUENCE:(\d+)/m);
+            const sequence = sequenceMatch ? Number(sequenceMatch[1]) : null;
+            const signature = textStr.split(/\r?\n/).filter(line => line && !line.startsWith('#')).join('\n');
+            const hadCleanPlaylist = streamInfo.LastCleanSignature !== null;
+            const advanced = sequence !== null && streamInfo.LastCleanSequence !== null
+                ? sequence > streamInfo.LastCleanSequence
+                : signature !== streamInfo.LastCleanSignature;
+            if (!hadCleanPlaylist || advanced) {
+                streamInfo.CleanPlaylistCount++;
+                streamInfo.LastCandidateCleanAt = Date.now();
+                streamInfo.HasAdvancedCleanPlaylist ||= hadCleanPlaylist && advanced;
+                streamInfo.LastCleanSequence = sequence;
+                streamInfo.LastCleanSignature = signature;
+            }
             // Check if the current playlist has live segments — if not, backup stream is dead
             const hasLiveSegments = textStr.includes(',live');
             const adEndMaxWaitMs = 12000;
             const elapsedSinceCandidate = Date.now() - streamInfo.PendingAdEndAt;
-            const slowPathReady = streamInfo.PendingAdEndAt > 0 && elapsedSinceCandidate >= adEndMaxWaitMs;
+            const slowPathReady = streamInfo.PendingAdEndAt > 0 && elapsedSinceCandidate >= adEndMaxWaitMs && streamInfo.HasAdvancedCleanPlaylist;
             if (streamInfo.CleanPlaylistCount >= 3 || !hasLiveSegments || slowPathReady) {
                 if (slowPathReady && streamInfo.CleanPlaylistCount < 3) {
                     console.log('[AD DEBUG] Slow-path ad-end escalation — ' + (streamInfo.AdEndBounceCount || 0) + ' marker bounces, ' + (elapsedSinceCandidate / 1000).toFixed(1) + 's since first clean poll');
@@ -1789,6 +1810,10 @@ twitch-videoad.js text/javascript
                 streamInfo.LoggedCodecUnknownThisBreak = false;
                 streamInfo.CleanPlaylistCount = 0;
                 streamInfo.PendingAdEndAt = 0;
+                streamInfo.LastCandidateCleanAt = 0;
+                streamInfo.LastCleanSequence = null;
+                streamInfo.LastCleanSignature = null;
+                streamInfo.HasAdvancedCleanPlaylist = false;
                 streamInfo.AdEndBounceCount = 0;
                 streamInfo.ConsecutiveAllStrippedPolls = 0;
                 streamInfo.EarlyReloadTriggered = false;
