@@ -37,7 +37,7 @@ twitch-videoad.js text/javascript
         }
     }
     'use strict';
-    const ourTwitchAdSolutionsVersion = 98;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 99;// Used to prevent conflicts with outdated versions of the scripts
     console.log('[AD DEBUG] TwitchAdSolutions vaft v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
         console.log('[AD DEBUG] CONFLICT: vaft v' + ourTwitchAdSolutionsVersion + ' skipped — another script already active (v' + window.twitchAdSolutionsVersion + '). Remove duplicate scripts.');
@@ -530,12 +530,18 @@ twitch-videoad.js text/javascript
         const BLANK_MP4 = new Blob([Uint8Array.from(atob('AAAAKGZ0eXBtcDQyAAAAAWlzb21tcDQyZGFzaGF2YzFpc282aGxzZgAABEltb292AAAAbG12aGQAAAAAAAAAAAAAAAAAAYagAAAAAAABAAABAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAABqHRyYWsAAABcdGtoZAAAAAMAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAURtZGlhAAAAIG1kaGQAAAAAAAAAAAAAAAAAALuAAAAAAFXEAAAAAAAtaGRscgAAAAAAAAAAc291bgAAAAAAAAAAAAAAAFNvdW5kSGFuZGxlcgAAAADvbWluZgAAABBzbWhkAAAAAAAAAAAAAAAkZGluZgAAABxkcmVmAAAAAAAAAAEAAAAMdXJsIAAAAAEAAACzc3RibAAAAGdzdHNkAAAAAAAAAAEAAABXbXA0YQAAAAAAAAABAAAAAAAAAAAAAgAQAAAAALuAAAAAAAAzZXNkcwAAAAADgICAIgABAASAgIAUQBUAAAAAAAAAAAAAAAWAgIACEZAGgICAAQIAAAAQc3R0cwAAAAAAAAAAAAAAEHN0c2MAAAAAAAAAAAAAABRzdHN6AAAAAAAAAAAAAAAAAAAAEHN0Y28AAAAAAAAAAAAAAeV0cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAoAAAAFoAAAAAAGBbWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAA9CQAAAAABVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABLG1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAOxzdGJsAAAAoHN0c2QAAAAAAAAAAQAAAJBhdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAoABaABIAAAASAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGP//AAAAOmF2Y0MBTUAe/+EAI2dNQB6WUoFAX/LgLUBAQFAAAD6AAA6mDgAAHoQAA9CW7y4KAQAEaOuPIAAAABBzdHRzAAAAAAAAAAAAAAAQc3RzYwAAAAAAAAAAAAAAFHN0c3oAAAAAAAAAAAAAAAAAAAAQc3RjbwAAAAAAAAAAAAAASG12ZXgAAAAgdHJleAAAAAAAAAABAAAAAQAAAC4AAAAAAoAAAAAAACB0cmV4AAAAAAAAAAIAAAABAACCNQAAAAACQAAA'), c => c.charCodeAt(0))], {type: 'video/mp4'});
         const realFetch = fetch;
         fetch = async function(url, options) {
-            if (typeof url === 'string') {
+            const input = url;
+            const requestUrl = typeof input === 'string' ? input : input instanceof URL ? input.href : input instanceof Request ? input.url : null;
+            if (requestUrl) {
+                url = requestUrl.trimEnd();
+                let parsedRequestUrl;
+                try { parsedRequestUrl = new URL(url); } catch { return realFetch(input, options); }
+                const fetchInput = target => input instanceof Request ? new Request(target, input) : target;
                 if (AdSegmentCache.has(url)) {
                     return new Response(BLANK_MP4);
                 }
                 url = url.trimEnd();
-                if (url.endsWith('m3u8')) {
+                if (!parsedRequestUrl.pathname.includes('/channel/hls/') && (StreamInfosByUrl[url] || parsedRequestUrl.pathname.endsWith('.m3u8'))) {
                     return new Promise(function(resolve, reject) {
                         const processAfter = async function(response) {
                             if (response.status === 200) {
@@ -544,7 +550,7 @@ twitch-videoad.js text/javascript
                                 resolve(response);
                             }
                         };
-                        realFetch(url, options).then(function(response) {
+                        realFetch(fetchInput(url), options).then(function(response) {
                             return processAfter(response);
                         })['catch'](function(err) {
                             reject(err);
@@ -562,10 +568,16 @@ twitch-videoad.js text/javascript
                     return new Promise(function(resolve, reject) {
                         const processAfter = async function(response) {
                             if (response.status == 200) {
-                                const encodingsM3u8 = await response.text();
+                                const masterLines = (await response.text()).split(/\r?\n/);
+                                for (let i = 0; i < masterLines.length - 1; i++) {
+                                    if (masterLines[i].startsWith('#EXT-X-STREAM-INF') && masterLines[i + 1].trim() && !masterLines[i + 1].startsWith('#')) {
+                                        masterLines[i + 1] = new URL(masterLines[i + 1].trim(), url).href;
+                                    }
+                                }
+                                const encodingsM3u8 = masterLines.join('\n');
                                 const serverTime = getServerTimeFromM3u8(encodingsM3u8);
                                 let streamInfo = StreamInfos[channelName];
-                                if (streamInfo != null && streamInfo.EncodingsM3U8 != null && (await realFetch(streamInfo.EncodingsM3U8.match(/^https:.*\.m3u8$/m)?.[0])).status !== 200) {
+                                if (streamInfo != null && streamInfo.EncodingsM3U8 != null && (streamInfo.ResolutionList.length === 0 || (await realFetch(streamInfo.ResolutionList[0].Url)).status !== 200)) {
                                     // The cached encodings are dead (the stream probably restarted)
                                     streamInfo = null;
                                 }
@@ -578,7 +590,7 @@ twitch-videoad.js text/javascript
                                     StreamInfos[channelName] = streamInfo = createStreamInfo(channelName, encodingsM3u8, parsedUrl.search);
                                     const lines = encodingsM3u8.split(/\r?\n/);
                                     for (let i = 0; i < lines.length - 1; i++) {
-                                        if (lines[i].startsWith('#EXT-X-STREAM-INF') && lines[i + 1].includes('.m3u8')) {
+                                        if (lines[i].startsWith('#EXT-X-STREAM-INF') && lines[i + 1] && !lines[i + 1].startsWith('#')) {
                                             const attributes = parseAttributes(lines[i]);
                                             const resolution = attributes['RESOLUTION'];
                                             if (resolution) {
@@ -672,7 +684,7 @@ twitch-videoad.js text/javascript
                                 resolve(response);
                             }
                         };
-                        realFetch(url, options).then(function(response) {
+                        realFetch(fetchInput(url), options).then(function(response) {
                             return processAfter(response);
                         })['catch'](function(err) {
                             reject(err);
