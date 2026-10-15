@@ -2,7 +2,7 @@
   "name": "twitch-ad-solutions-tests",
   "private": true,
   "scripts": {
-    "test": "node tests/test.js && node --test tests/project.test.js",
+    "test": "node tests/test.js && node --test tests/*.test.js",
     "test:browser": "playwright test --config tests/playwright.config.js",
     "test:project": "node --test tests/project.test.js",
     "test:package": "node tests/package.js"

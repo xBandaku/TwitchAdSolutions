@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Accept GQL requests with omitted headers, Headers objects, header tuples, URL inputs, and Request inputs without crashing the fetch hook. Ported from Antidrew with header normalization.
+
 ## v68.5.10 (2026-10-15)
 
 ### Documentation
