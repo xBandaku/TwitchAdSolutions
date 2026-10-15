@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Bound backup playlist requests to 4 seconds including response bodies, cap a full backup search at 8 seconds, validate HLS responses, and wait 3 seconds before retrying an exhausted search. Ported Antidrew backup deadlines and retry backoff.
+
 - Route query-string and extensionless v2 media playlists through ad processing. Resolve relative variant URIs and probe the parsed cached variant instead of matching a .m3u8-only regular expression.
 
 - Reject playlist fetches when reading or processing the response fails, instead of leaving the request pending. Ported Antidrew promise propagation for media and master playlists.

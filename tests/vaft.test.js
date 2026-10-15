@@ -6,6 +6,16 @@ const { readScript, scriptNodes } = require('./scripts');
 const files = ['vaft/vaft.user.js', 'vaft/vaft_testing.user.js'];
 const clean = '#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:100\n#EXTINF:2.000,live\nhttps://fixture.invalid/live.ts\n';
 
+function registerStream(context, values = {}) {
+    const url = 'https://fixture.invalid/native.m3u8';
+    const stream = context.createStreamInfo('fixture', '', '');
+    Object.assign(stream, values);
+    stream.Urls[url] = { Resolution: '1920x1080', FrameRate: 60, Codecs: 'avc1.4d4028' };
+    context.StreamInfosByUrl[url] = stream;
+    context.StreamInfos.fixture = stream;
+    return { url, stream };
+}
+
 function harness(file, bindings = {}) {
     const source = readScript(file);
     const declarations = scriptNodes(source).filter(node => node.type === 'FunctionDeclaration');
@@ -22,6 +32,55 @@ function harness(file, bindings = {}) {
 }
 
 for (const file of files) {
+    test(file + ' times out backup headers and bodies and rejects invalid playlists', async () => {
+        const timers = new Map();
+        let id = 0;
+        const { context } = harness(file, {
+            setTimeout(callback, delay) { timers.set(++id, { callback, delay }); return id; },
+            clearTimeout(timer) { timers.delete(timer); }
+        });
+        for (const body of [false, true]) {
+            const pending = context.fetchPlaylist('https://fixture.invalid/backup', async (url, { signal }) => {
+                const hang = () => new Promise((resolve, reject) => signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))));
+                return body ? { status: 200, text: hang } : hang();
+            });
+            await new Promise(setImmediate);
+            assert.equal(timers.size, 1);
+            const timer = [...timers.values()][0];
+            assert.equal(timer.delay, 4000);
+            timer.callback();
+            assert.equal(await pending, null);
+            assert.equal(timers.size, 0);
+        }
+        for (const text of ['<html>error</html>', '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=123\nhttps://fixture.invalid/variant']) {
+            assert.equal(await context.fetchPlaylist('https://fixture.invalid/backup', async () => new Response(text), 4000, true), null);
+        }
+        assert.match(await context.fetchPlaylist('https://fixture.invalid/backup', async () => new Response(clean), 4000, true), /#EXTINF:/);
+        assert.equal(timers.size, 0);
+    });
+
+    test(file + ' bounds a backup search and backs off failed searches', async () => {
+        let now = 100000, tokens = 0;
+        const { context } = harness(file, { Date: class extends Date { static now() { return now; } } });
+        const { url, stream } = registerStream(context, { IsShowingAd: true, HasConfirmedAdAttrs: true });
+        context.getAccessToken = async (channel, type, timeout) => {
+            tokens++;
+            assert.ok(timeout > 0 && timeout <= 4000);
+            now += timeout;
+            throw new Error('fixture timeout');
+        };
+        const marked = clean.replace('#EXT-X-TARGETDURATION', '#EXT-X-DATERANGE:CLASS="twitch-trigger"\n#EXT-X-TARGETDURATION');
+        await context.processM3U8(url, marked, async () => { throw new Error('unexpected fetch'); });
+        assert.equal(now, 108000);
+        assert.equal(tokens, 2);
+        assert.equal(stream.BackupRetryAt, 111000);
+        await context.processM3U8(url, marked, async () => { throw new Error('unexpected fetch'); });
+        assert.equal(tokens, 2);
+        now = 111001;
+        await context.processM3U8(url, marked, async () => { throw new Error('unexpected fetch'); });
+        assert.ok(tokens > 2);
+    });
+
     test(file + ' processes query, v2 and relative media URLs from master playlists', async () => {
         for (const uri of ['https://fixture.invalid/index.m3u8?token=fixture', 'https://fixture.invalid/v1/chunked/stream', '../fixture/chunked?token=fixture']) {
             const masterUrl = 'https://usher.ttvnw.net/api/v2/channel/hls/fixture.m3u8?token=fixture';
