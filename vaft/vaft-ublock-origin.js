@@ -37,7 +37,7 @@ twitch-videoad.js text/javascript
         }
     }
     'use strict';
-    const ourTwitchAdSolutionsVersion = 103;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 104;// Used to prevent conflicts with outdated versions of the scripts
     console.log('[AD DEBUG] TwitchAdSolutions vaft v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
         console.log('[AD DEBUG] CONFLICT: vaft v' + ourTwitchAdSolutionsVersion + ' skipped — another script already active (v' + window.twitchAdSolutionsVersion + '). Remove duplicate scripts.');
@@ -186,6 +186,8 @@ twitch-videoad.js text/javascript
             FailedBackupPlayerTypes: new Map(),
             LoggedBackupAdsByType: null,
             CycleRescuedThisBreak: false,
+            LoggedCodecMismatchThisBreak: false,
+            LoggedCodecUnknownThisBreak: false,
             EarlyReloadCount: 0,
             EarlyReloadAtPoll: 0,
             EarlyReloadTriggered: false,
@@ -1103,42 +1105,70 @@ twitch-videoad.js text/javascript
         }
         return 'unknown';
     }
-    function getStreamUrlForResolution(encodingsM3u8, resolutionInfo) {
+    function getStreamUrlForResolution(encodingsM3u8, resolutionInfo, streamInfo) {
         const encodingsLines = encodingsM3u8.split(/\r?\n/);
         const [targetWidth, targetHeight] = resolutionInfo.Resolution.split('x').map(Number);
+        const targetFamily = videoCodecFamily(resolutionInfo.Codecs);
         let matchedResolutionUrl = null;
         let matchedFrameRate = false;
         let closestResolutionUrl = null;
         let closestResolutionDifference = Infinity;
+        let unknownClosestUrl = null;
+        let unknownClosestDifference = Infinity;
+        let fallbackClosestUrl = null;
+        let fallbackClosestDifference = Infinity;
         for (let i = 0; i < encodingsLines.length - 1; i++) {
-            // Accept v2 API variant URLs which are raw CDN URLs without '.m3u8' in the path.
-            // v1 API: next line is '...index-<resolution>.m3u8?...'
-            // v2 API: next line is a raw CDN URL like 'https://video-edge-...net/v1/.../chunked/...'
-            // without '.m3u8'. Matching only on '.m3u8' would skip v2 variants entirely,
-            // causing getStreamUrlForResolution to return null and backup selection to fail.
             const nextLine = encodingsLines[i + 1]?.trim();
             if (encodingsLines[i].startsWith('#EXT-X-STREAM-INF') && nextLine && !nextLine.startsWith('#') && (nextLine.includes('.m3u8') || nextLine.includes('://'))) {
                 const attributes = parseAttributes(encodingsLines[i]);
                 const resolution = attributes['RESOLUTION'];
                 const frameRate = attributes['FRAME-RATE'];
+                const family = videoCodecFamily(attributes['CODECS']);
+                const knownSameFamily = targetFamily === 'unknown' || (family === targetFamily && family !== 'unknown');
+                const unknownFamily = family === 'unknown';
                 if (resolution) {
-                    if (resolution == resolutionInfo.Resolution && (!matchedResolutionUrl || (!matchedFrameRate && frameRate == resolutionInfo.FrameRate))) {
-                        matchedResolutionUrl = encodingsLines[i + 1];
-                        matchedFrameRate = frameRate == resolutionInfo.FrameRate;
-                        if (matchedFrameRate) {
-                            return matchedResolutionUrl;
-                        }
-                    }
                     const [width, height] = resolution.split('x').map(Number);
                     const difference = Math.abs((width * height) - (targetWidth * targetHeight));
-                    if (difference < closestResolutionDifference) {
-                        closestResolutionUrl = encodingsLines[i + 1];
-                        closestResolutionDifference = difference;
+                    if (knownSameFamily) {
+                        if (resolution == resolutionInfo.Resolution && (!matchedResolutionUrl || (!matchedFrameRate && frameRate == resolutionInfo.FrameRate))) {
+                            matchedResolutionUrl = encodingsLines[i + 1];
+                            matchedFrameRate = frameRate == resolutionInfo.FrameRate;
+                            if (matchedFrameRate) {
+                                return matchedResolutionUrl;
+                            }
+                        }
+                        if (difference < closestResolutionDifference) {
+                            closestResolutionUrl = encodingsLines[i + 1];
+                            closestResolutionDifference = difference;
+                        }
+                    } else if (unknownFamily) {
+                        if (difference < unknownClosestDifference) {
+                            unknownClosestUrl = encodingsLines[i + 1];
+                            unknownClosestDifference = difference;
+                        }
+                    } else if (difference < fallbackClosestDifference) {
+                        fallbackClosestUrl = encodingsLines[i + 1];
+                        fallbackClosestDifference = difference;
                     }
                 }
             }
         }
-        return closestResolutionUrl;
+        const sameFamilyPick = matchedResolutionUrl || closestResolutionUrl;
+        if (sameFamilyPick) {
+            return sameFamilyPick;
+        }
+        if (unknownClosestUrl) {
+            if (streamInfo && !streamInfo.LoggedCodecUnknownThisBreak) {
+                streamInfo.LoggedCodecUnknownThisBreak = true;
+                console.log('[AD DEBUG] Backup selection codec unverified: no ' + targetFamily + ' variant in backup master for ' + resolutionInfo.Resolution + ' (' + (resolutionInfo.Codecs || 'no CODECS') + ') — using a variant with no recognisable video codec (codec unconfirmed on splice)');
+            }
+            return unknownClosestUrl;
+        }
+        if (fallbackClosestUrl && streamInfo && !streamInfo.LoggedCodecMismatchThisBreak) {
+            streamInfo.LoggedCodecMismatchThisBreak = true;
+            console.log('[AD DEBUG] Backup selection codec mismatch: no ' + targetFamily + ' variant in backup master for ' + resolutionInfo.Resolution + ' (' + (resolutionInfo.Codecs || 'no CODECS') + ') — falling back cross-family (error-4000 risk on splice)');
+        }
+        return fallbackClosestUrl;
     }
     // Core ad-blocking logic: detect ads in m3u8, fetch backup streams, strip ad segments
     function processM3U8(url, textStr, realFetch, requestId = 0, requestedStream = StreamInfosByUrl[url]) {
@@ -1524,7 +1554,7 @@ twitch-videoad.js text/javascript
                     }
                     if (encodingsM3u8) {
                         try {
-                            const streamM3u8Url = getStreamUrlForResolution(encodingsM3u8, currentResolution);
+                            const streamM3u8Url = getStreamUrlForResolution(encodingsM3u8, currentResolution, streamInfo);
                             const streamM3u8Response = await fetchPlaylist(streamM3u8Url, realFetch, Math.min(BackupRequestTimeout, backupSearchDeadline - Date.now()), true);
                             if (streamM3u8Response) {
                                 const m3u8Text = streamM3u8Response;
@@ -1773,6 +1803,8 @@ twitch-videoad.js text/javascript
                 streamInfo.SpoofedAdIds?.clear?.();// New break = fresh ad-spoof dedup set
                 streamInfo.FailedBackupPlayerTypes?.clear?.();
                 streamInfo.BackupRetryAt = 0;
+                streamInfo.LoggedCodecMismatchThisBreak = false;
+                streamInfo.LoggedCodecUnknownThisBreak = false;
                 if (streamInfo.LoggedBackupAdsByType) streamInfo.LoggedBackupAdsByType.clear();
                 streamInfo.LoggedContamReorderThisBreak = false;
                 streamInfo.CleanPlaylistCount = 0;
