@@ -21,7 +21,7 @@ If it says `Blocking ads (stripping)` in the top left of the stream then it's ac
 
 ## The script don't work on mobile (m.twitch.tv)
 
-There are no plans of implementing the scripts on m.twitch.tv but there are other solutions which blocking ads on Twitch for mobile. See https://github.com/pixeltris/TwitchAdSolutions/blob/master/full-list.md
+There are no plans of implementing the scripts on m.twitch.tv but there are other solutions which blocking ads on Twitch for mobile. See [the solution list](full-list.md).
 
 ## Long black screen during ads
 
