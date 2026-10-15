@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Honor required post-ad buffer resets even when playback is moving near the live edge. Keep the health shortcut for optional reloads. This fixes a skipped cleanup path that could leave audio and video out of sync after backup playback.
+
 - Add browser recovery fixtures with native media playback and simulated Twitch player state. Cover failed reload mute rollback, user mute intent, replacement-player resume, overlapping reloads, pause and PiP cancellation.
 
 - Run the full Node and browser suites before release publishing. Automatically build and verify the userscript, uBlock resource, ZIP bundle and checksums; normalize script line endings for consistent packages.
