@@ -162,6 +162,23 @@ test.afterEach(async ({ page }, testInfo) => {
 
 for (const script of scripts) {
     if (script.file.startsWith('vaft/vaft')) {
+        test(script.file + ' honors a worker hard reset near the native live edge', async ({ page, context }) => {
+            await bootRecovery(page, context, script.file);
+            await page.evaluate(() => { window.__recoveryFixture.current.video.currentTime = 17; });
+            await expect.poll(() => page.evaluate(() => {
+                const video = window.__recoveryFixture.current.video;
+                return video.readyState >= 3 && !video.paused && !video.seeking && video.seekable.length > 0
+                    && video.seekable.end(video.seekable.length - 1) - video.currentTime <= 7;
+            })).toBe(true);
+            await page.evaluate(() => window.reloadTwitchPlayer());
+            expect(await page.evaluate(() => window.__recoveryFixture.reloads.length)).toBe(0);
+            await page.evaluate(() => window.__recoveryFixture.reload('early'));
+            expect(await page.evaluate(() => ({
+                reloads: window.__recoveryFixture.reloads,
+                originalConnected: window.__recoveryFixture.players[0].video.isConnected
+            }))).toEqual({ reloads: [{ isNewMediaPlayerInstance: true, refreshAccessToken: true }], originalConnected: false });
+        });
+
         for (const userMute of [false, true]) {
             test(script.file + ' rolls back failed native-video recovery, user mute=' + userMute, async ({ page, context }) => {
                 await bootRecovery(page, context, script.file);

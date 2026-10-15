@@ -73,6 +73,45 @@ function recoveryHarness(file) {
 }
 
 for (const file of files) {
+    test(file + ' honors post-ad buffer resets despite healthy playback signals', async () => {
+        for (const stripped of [false, true]) {
+            for (const ios of [false, true]) {
+                const worker = harness(file);
+                const { url } = registerStream(worker.context, {
+                    IsShowingAd: true, HasConfirmedAdAttrs: true, CleanPlaylistCount: 2,
+                    LastCommittedBackupPlayerType: stripped ? 'popout' : 'autoplay',
+                    NumStrippedAdSegments: stripped ? 4 : 0
+                });
+                await worker.context.processM3U8(url, clean, null);
+                const message = worker.messages.find(message => message.key === 'ReloadPlayer');
+                assert.equal(message.kind, 'early');
+
+                const h = recoveryHarness(file), skipped = [];
+                h.context.iosSoftReload = ios;
+                h.context.postTwitchWorkerMessage = key => skipped.push(key);
+                Object.assign(h.current.player.video, { readyState: 4, seekable: { length: 1, end: () => 13 } });
+                const pending = h.context.doTwitchPlayerTask(false, true, message.kind);
+                assert.equal(h.reloads.length, 1);
+                assert.equal(h.reloads[0].isNewMediaPlayerInstance, !ios);
+                assert.equal(h.reloads[0].refreshAccessToken, true);
+                assert.ok(!skipped.includes('ReloadSkipped'));
+                h.context.doTwitchPlayerTask.recovery.cancel();
+                assert.equal(await pending, false);
+            }
+        }
+    });
+
+    test(file + ' still skips optional reloads when playback is near live', () => {
+        for (const kind of [undefined, 'post-ad']) {
+            const h = recoveryHarness(file), messages = [];
+            h.context.postTwitchWorkerMessage = key => messages.push(key);
+            Object.assign(h.current.player.video, { readyState: 4, seekable: { length: 1, end: () => 13 } });
+            assert.equal(h.context.doTwitchPlayerTask(false, true, kind), undefined);
+            assert.equal(h.reloads.length, 0);
+            assert.deepEqual(messages, ['ReloadSkipped']);
+        }
+    });
+
     test(file + ' upgrades a shared soft recovery before accepting playback progress', async () => {
         const h = recoveryHarness(file);
         const pending = h.context.doTwitchPlayerTask(false, true, 'post-ad');
