@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Run the full Node and browser suites before release publishing. Automatically build and verify the userscript, uBlock resource, ZIP bundle and checksums; normalize script line endings for consistent packages.
+
 - Upgrade an active soft recovery when a hard reload is requested. Keep a shared promise and bounded retries, with one final upgrade attempt allowed if both soft attempts already started.
 
 - Restore a temporary pre-mute when a reload fails or recovery is cancelled, while preserving user mute changes and leaving replacement videos alone.
