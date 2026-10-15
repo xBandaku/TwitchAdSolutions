@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Reject playlist fetches when reading or processing the response fails, instead of leaving the request pending. Ported Antidrew promise propagation for media and master playlists.
+
 - Accept GQL requests with omitted headers, Headers objects, header tuples, URL inputs, and Request inputs without crashing the fetch hook. Ported from Antidrew with header normalization.
 
 ## v68.5.10 (2026-10-15)
