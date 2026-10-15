@@ -4,7 +4,6 @@ on:
   push:
     paths: ['.github/workflows/release*.yml', 'tests/release-workflow.test.js', 'CHANGELOG.md', 'vaft/vaft.user.js']
   pull_request:
-    paths: ['.github/workflows/release*.yml', 'tests/release-workflow.test.js', 'CHANGELOG.md', 'vaft/vaft.user.js']
   workflow_dispatch:
 
 permissions:
