@@ -7,11 +7,8 @@ const root = path.join(__dirname, '..');
 const scripts = [
     { file: 'vaft/vaft.user.js', worker: true },
     { file: 'vaft/vaft-ublock-origin.js', worker: true },
-    { file: 'vaft/vaft_testing.user.js', worker: true },
-    { file: 'vaft/vaft-testing-ublock-origin.js', worker: true },
     { file: 'video-swap-new/video-swap-new.user.js', worker: true },
     { file: 'video-swap-new/video-swap-new-ublock-origin.js', worker: true },
-    { file: 'video-swap-new/video-swap-new-ublock-origin-testing.js', worker: true },
     { file: 'strip/strip.user.js', worker: true },
     { file: 'vaft/twitch-brave-fix.user.js', worker: false },
     { file: 'vaft/twitch-brave-fix-ublock-origin.js', worker: false }

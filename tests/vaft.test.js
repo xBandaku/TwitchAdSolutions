@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const { readScript, scriptNodes } = require('./scripts');
 
-const files = ['vaft/vaft.user.js', 'vaft/vaft_testing.user.js'];
+const files = ['vaft/vaft.user.js', 'vaft/vaft-ublock-origin.js'];
 const clean = '#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:100\n#EXTINF:2.000,live\nhttps://fixture.invalid/live.ts\n';
 
 function registerStream(context, values = {}) {

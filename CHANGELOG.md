@@ -1,5 +1,19 @@
 ## Unreleased
 
+## v68.5.23 (2026-10-15)
+
+### Project cleanup
+
+- Maintain the project on `master` with one supported version of each script. Remove the separate vaft and video-swap-new testing scripts from the repository and current release bundle.
+- Retire the VOD CSAI beta release and remove obsolete project branches.
+- Simplify the README, keep the badges, and point installation links to `master` for both userscript and uBlock formats.
+- Run the vaft regression suite against both supported install formats and retain PiP coverage in the runtime checks.
+
+### Distribution
+
+- Vaft 68.5.23 (internal version 109). Playback logic matches v68.5.22.
+- The release bundle contains seven supported scripts and SHA256SUMS.
+
 ## v68.5.22 (2026-10-15)
 
 ### Fixed

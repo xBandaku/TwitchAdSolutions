@@ -560,10 +560,8 @@ async function testPlaybackRegressions() {
     console.log('--- Playback regressions (script source) ---');
     const scriptPaths = [
         'vaft/vaft.user.js', 'vaft/vaft-ublock-origin.js',
-        'vaft/vaft_testing.user.js', 'vaft/vaft-testing-ublock-origin.js',
         'video-swap-new/video-swap-new.user.js',
-        'video-swap-new/video-swap-new-ublock-origin.js',
-        'video-swap-new/video-swap-new-ublock-origin-testing.js'
+        'video-swap-new/video-swap-new-ublock-origin.js'
     ];
     for (const scriptPath of scriptPaths) {
         const source = fs.readFileSync(path.join(__dirname, '..', scriptPath), 'utf8');
@@ -722,21 +720,19 @@ async function testPlaybackRegressions() {
 
         testReloadVideoTarget(source, label);
 
-        if (scriptPath.includes('testing')) {
-            const pipContext = playbackContext(source);
-            pipContext.document.pictureInPictureElement = pipContext.video;
-            pipContext.iosSoftReload = false;
-            pipContext.playerAndState.player.isPaused = () => pipContext.video.paused;
-            pipContext.playerAndState.player.pause = () => { pipContext.video.paused = true; };
-            pipContext.playerAndState.state.setSrc = () => { throw new Error('PiP player must not be replaced'); };
-            vm.runInContext(scriptFunction(source, 'doTwitchPlayerTask'), pipContext);
-            pipContext.doTwitchPlayerTask(false, true, 'early');
-            assertEq(pipContext.video.plays, 1, label + 'PiP reload uses pause/play without replacing the player');
-            pipContext.video.paused = true;
-            pipContext.doTwitchPlayerTask(false, true, 'early');
-            assertEq(pipContext.video.plays, 1, label + 'PiP reload preserves a paused player');
-            continue;
-        }
+        const pipContext = playbackContext(source);
+        pipContext.document.pictureInPictureElement = pipContext.video;
+        pipContext.iosSoftReload = false;
+        pipContext.playerAndState.player.isPaused = () => pipContext.video.paused;
+        pipContext.playerAndState.player.pause = () => { pipContext.video.paused = true; };
+        pipContext.playerAndState.state.setSrc = () => { throw new Error('PiP player must not be replaced'); };
+        vm.runInContext(scriptFunction(source, 'doTwitchPlayerTask'), pipContext);
+        pipContext.doTwitchPlayerTask(false, true, 'early');
+        assertEq(pipContext.video.plays, 1, label + 'PiP reload uses pause/play without replacing the player');
+        pipContext.video.paused = true;
+        pipContext.doTwitchPlayerTask(false, true, 'early');
+        assertEq(pipContext.video.plays, 1, label + 'PiP reload preserves a paused player');
+
         const gapContext = playbackContext(source);
         vm.runInContext(scriptFunction(source, 'monitorPlayerBuffering'), gapContext);
         gapContext.playerBufferState.inAdBreak = true;

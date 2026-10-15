@@ -56,7 +56,6 @@ for (const script of scripts) {
 
 for (const pair of [
     ['vaft/vaft.user.js', 'vaft/vaft-ublock-origin.js'],
-    ['vaft/vaft_testing.user.js', 'vaft/vaft-testing-ublock-origin.js'],
     ['video-swap-new/video-swap-new.user.js', 'video-swap-new/video-swap-new-ublock-origin.js']
 ]) {
     test(pair[0] + ' matches its uBlock runtime functions and worker', () => {

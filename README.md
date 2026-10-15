@@ -10,86 +10,70 @@
 </div>
 <!-- markdownlint-enable MD033 MD041 -->
 
-Scripts for blocking Twitch ads with a userscript manager or uBlock Origin. Use `vaft` to get started.
+Twitch ad-blocking scripts for Violentmonkey and uBlock Origin. Start with `vaft`. Playback can pause or temporarily drop to 360p during an ad break.
 
-Fork of [ryanbr/TwitchAdSolutions](https://github.com/ryanbr/TwitchAdSolutions), originally based on [pixeltris/TwitchAdSolutions](https://github.com/pixeltris/TwitchAdSolutions) (archived).
+`master` is the only project branch. Install links below follow it; [releases](https://github.com/xBandaku/TwitchAdSolutions/releases) provide versioned downloads and patch notes.
 
-Run only one Twitch-specific ad blocker at a time.
-
-## Contents
-
-- [Install](#install)
-- [Scripts](#scripts)
-- [Configuration](#configuration)
-- [Troubleshooting](#troubleshooting)
-- [Other solutions](#other-solutions)
-- [Development checks](#development-checks)
-- [License](#license)
+Fork of [ryanbr/TwitchAdSolutions](https://github.com/ryanbr/TwitchAdSolutions), originally based on [pixeltris/TwitchAdSolutions](https://github.com/pixeltris/TwitchAdSolutions).
 
 ## Install
 
+Run one Twitch-specific ad blocker at a time. Replace any older TwitchAdSolutions installation before installing.
+
 ### Violentmonkey
 
-1. Install [Violentmonkey](https://violentmonkey.github.io/) in your browser.
-2. Open the [latest stable vaft userscript](https://github.com/xBandaku/TwitchAdSolutions/releases/latest/download/vaft.user.js) and confirm installation in Violentmonkey. If your browser downloads the file, import `vaft.user.js` through Violentmonkey's dashboard.
-3. Reload any open Twitch stream.
+1. Install [Violentmonkey](https://violentmonkey.github.io/).
+2. Open [vaft.user.js](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/master/vaft/vaft.user.js) and confirm installation. If your browser downloads the file, import it through Violentmonkey's dashboard.
+3. Reload Twitch.
 
-See the [release notes](https://github.com/xBandaku/TwitchAdSolutions/releases/latest) for changes and testing limits.
-
-[Tampermonkey](https://www.tampermonkey.net/) and [Userscripts for Safari](https://apps.apple.com/us/app/userscripts/id1463298887) are other supported managers. Greasemonkey doesn't work with the scripts.
-
-On browsers that require userscript permissions, enable them in the extension settings. See [troubleshooting](issues.md) for details.
+[Tampermonkey](https://www.tampermonkey.net/) and [Userscripts for Safari](https://apps.apple.com/us/app/userscripts/id1463298887) are also supported. Greasemonkey is incompatible. Check the [troubleshooting guide](issues.md) if your browser requires extra userscript permissions.
 
 ### uBlock Origin
 
-1. Open the uBlock Origin dashboard. In **My filters**, add the following filter and apply your changes:
+1. Open the uBlock Origin dashboard. Add this to **My filters** and apply your changes:
 
    ```text
    twitch.tv##+js(twitch-videoad)
    ```
 
 2. In **Settings**, enable **I am an advanced user** and open the cog beside it.
-3. Set `userResourcesLocation` to the stable vaft resource below and apply your changes:
+3. Set this value and apply your changes:
 
    ```text
-   userResourcesLocation https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/v68.5.22/vaft/vaft-ublock-origin.js
+   userResourcesLocation https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/master/vaft/vaft-ublock-origin.js
    ```
 
-   If you already use custom resources, append this URL with a space between entries. See uBlock Origin's [advanced settings](https://github.com/gorhill/uBlock/wiki/Advanced-settings#userresourceslocation).
+   If you already use custom resources, append the URL with a space between entries. See uBlock Origin's [advanced settings](https://github.com/gorhill/uBlock/wiki/Advanced-settings#userresourceslocation).
 
 4. Disable and re-enable uBlock Origin, or restart your browser, then reload Twitch.
 
-The versioned resource stays on v68.5.22 until you update its URL. To uninstall, remove the filter and this resource URL. Set `userResourcesLocation` back to `unset` only if no other custom resources remain.
+To uninstall, remove the filter and this resource URL. Set `userResourcesLocation` back to `unset` only if no other custom resources remain.
 
 ## Scripts
 
-`vaft` is the recommended script for this fork. It looks for a clean backup stream and can strip ad segments when a clean stream is unavailable. Playback may pause or drop to 360p during an ad break.
-
 | Script | Userscript | uBlock Origin |
 | --- | --- | --- |
-| vaft | [Stable release](https://github.com/xBandaku/TwitchAdSolutions/releases/latest/download/vaft.user.js) / [master](https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft.user.js) | [v68.5.22](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/v68.5.22/vaft/vaft-ublock-origin.js) / [master](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/master/vaft/vaft-ublock-origin.js) |
-| video-swap-new | [master](https://github.com/xBandaku/TwitchAdSolutions/raw/master/video-swap-new/video-swap-new.user.js) | [v68.5.22](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/v68.5.22/video-swap-new/video-swap-new-ublock-origin.js) / [master](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/master/video-swap-new/video-swap-new-ublock-origin.js) |
+| vaft (recommended) | [Install](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/master/vaft/vaft.user.js) | [Resource](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/master/vaft/vaft-ublock-origin.js) |
+| video-swap-new | [Install](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/master/video-swap-new/video-swap-new.user.js) | [Resource](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/master/video-swap-new/video-swap-new-ublock-origin.js) |
 
-`master` links follow the current branch and can include changes that have not been released. `video-swap-new` is an alternative backup-stream implementation; start with vaft.
+Vaft looks for a clean backup stream and strips ad segments when one is unavailable. `video-swap-new` is an alternative backup-stream implementation. Choose one script.
 
 ## Configuration
 
-Defaults work without setup. To change a setting, open the browser console on Twitch, set its `localStorage` value, and reload the page. Removing a value restores its default.
+Defaults work without setup. To change a setting, open the browser console on Twitch, set its `localStorage` value, and reload the page. Removing the value restores the default.
 
-All keys below start with `twitchAdSolutions_`. For example, `hideAdOverlay` uses the full key `twitchAdSolutions_hideAdOverlay`.
+Each setting below starts with `twitchAdSolutions_`.
 
 | Setting | Default | Effect |
 | --- | --- | --- |
-| `reloadPlayerAfterAd` | `true` | Prefer a player reload after ads. Set to `false` to prefer pause/play; required recovery reloads can still run. |
-| `playerType` | `popout` | Player context for access-token requests, such as `popout`, `embed`, `site`, or `autoplay`. Autoplay can limit video quality to 360p. |
+| `reloadPlayerAfterAd` | `true` | Prefer a reload after ads. Set to `false` to prefer pause/play; required recovery reloads can still run. |
+| `playerType` | `popout` | Player context for token requests, such as `popout`, `embed`, `site`, or `autoplay`. Autoplay can limit quality to 360p. |
 | `hideAdOverlay` | Unset | Set to `true` to hide the "Blocking ads" banner. |
-| `pinBackupPlayerType` | vaft: `true`; video-swap-new: `false` | Remember successful backups and try them first. Vaft also promotes Source-quality backups independently and never pins `autoplay` through this setting. |
-| `reloadCooldownSeconds` | `30` | Base reload cooldown in seconds. Some recovery paths bypass it; this is not a limit on every reload. Set to `0` to disable the cooldown. |
-| `disableReloadCap` | Unset; vaft only | Set to `true` to allow repeated buffer-monitor reloads within a recovery window. This can cause reload loops. |
-| `preferLowQualityBackup` | `true`; vaft only | Allow the 360p autoplay fallback and the legacy strip-path escape hatch. Set to `false` to disable both. |
-| `backupSwapFirst` | `true`; vaft only | Try backup streams when ads are detected. Set to `false` to use the legacy strip-first path. |
-
-Vaft can temporarily use a 360p autoplay backup while Twitch's quality menu still shows Source quality. It attempts to restore full quality when the ad break ends.
+| `pinBackupPlayerType` | vaft: `true`; video-swap-new: `false` | Remember successful backups. Vaft also promotes Source-quality backups independently and never pins `autoplay` through this setting. |
+| `reloadCooldownSeconds` | `30` | Base cooldown in seconds. Some recovery paths bypass it. Set to `0` to disable. |
+| `disableReloadCap` | Unset; vaft only | Set to `true` to allow repeated buffer-monitor reloads. This can cause reload loops. |
+| `preferLowQualityBackup` | `true`; vaft only | Allow the 360p autoplay fallback and legacy strip-path escape hatch. Set to `false` to disable both. |
+| `backupSwapFirst` | `true`; vaft only | Try backup streams when ads are detected. Set to `false` for the legacy strip-first path. |
 
 For example, hide the banner with:
 
@@ -97,43 +81,34 @@ For example, hide the banner with:
 localStorage.setItem('twitchAdSolutions_hideAdOverlay', 'true');
 ```
 
-Restore it with:
+Restore the default with `localStorage.removeItem('twitchAdSolutions_hideAdOverlay')`.
 
-```js
-localStorage.removeItem('twitchAdSolutions_hideAdOverlay');
-```
+During an autoplay backup, Twitch's quality menu can still show Source while playback is at 360p. Vaft attempts to restore full quality when the break ends.
 
 ## Troubleshooting
 
-1. Check that the userscript is enabled and has the required browser permissions, then reload Twitch.
-2. Disable other Twitch-specific ad blockers. If playback problems continue, test with other Twitch player extensions disabled too.
-3. For freezing, buffering, or missing injection, see the [troubleshooting guide](issues.md).
+Check that the script is enabled and has the required browser permissions. Disable other Twitch-specific ad blockers, then reload Twitch. If playback problems continue, test with other Twitch player extensions disabled too.
 
-If the problem persists, [open an issue in this fork](https://github.com/xBandaku/TwitchAdSolutions/issues/new). Include your browser, script version, enabled Twitch extensions, and relevant `[AD DEBUG]` console messages.
+See the [troubleshooting guide](issues.md) for freezing, buffering, and missing injection. To [report a bug](https://github.com/xBandaku/TwitchAdSolutions/issues/new), include your browser, script version, Twitch extensions, and relevant `[AD DEBUG]` console messages.
 
-## Other solutions
+The [solution list](full-list.md) covers proxies, alternate players, and other tools.
 
-See the [solution list](full-list.md) for proxies, alternate players, and other tools, including [proxy buffering and downtime notes](full-list.md#proxy-issues). There is also a community list at [ScrewTwitchAds](https://github.com/zGato/ScrewTwitchAds).
+## Development
 
-## Development checks
-
-Use Node.js 22 or 24 and Python 3. Install the locked test dependencies, then run the checks:
+Use Node.js 22 or 24 and Python 3. Changes go to `master` after validation.
 
 ```sh
 npm ci --ignore-scripts
 npm test
-node --test tests/release-workflow.test.js
 npm run test:package
 npx playwright install
 npm run test:browser
 ```
 
-Project checks run on Windows and Linux with both Node versions. They validate metadata, syntax, paired userscript/uBlock logic, serialized workers, and runtime regressions. Packaging writes the installable scripts and SHA-256 checksums to `release-artifact/`.
+Checks cover syntax, metadata, matching userscript/uBlock logic, serialized workers, and runtime regressions. Packaging writes the supported scripts and SHA256SUMS to `release-artifact/`.
 
-Browser tests run the scripts on offline Twitch fixtures in Chromium, Firefox, and WebKit. GitHub Actions saves reports and failure traces. Release checks test note extraction and publishing restrictions. Live ad delivery and installation through browser extensions need manual testing.
-
-Recovery fixtures use native media elements with simulated Twitch player state. Windows WebKit skips the PCM media cases because its media backend cannot decode the fixture; Linux CI runs them. PiP state is simulated for headless tests.
+Browser tests use offline Twitch pages in Chromium, Firefox, and WebKit. Recovery fixtures use native media with simulated player and PiP state. Windows WebKit skips the PCM media cases; Linux CI runs them. Live ad delivery and extension installation need manual testing.
 
 ## License
 
-Licensed under the [MIT License](LICENSE). See [CHANGELOG.md](CHANGELOG.md) for this fork's changes.
+[MIT](LICENSE). See [CHANGELOG.md](CHANGELOG.md) for release history.
