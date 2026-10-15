@@ -1,5 +1,18 @@
 ## Unreleased
 
+## v68.5.10 (2026-10-15)
+
+### Documentation
+- Simplify installation steps and group stable and development downloads in a script table. Keep the existing README badges ([#9](https://github.com/xBandaku/TwitchAdSolutions/pull/9)).
+- Condense configuration into a table, clarify vaft-only settings and the 360p autoplay fallback, and shorten troubleshooting and alternative-tool links.
+- Include the release-workflow test command in the development instructions. Update uBlock permalinks to v68.5.10.
+
+### Distribution
+- Update the userscript version to 68.5.10 so this release includes the cleaned README in its source archive. Playback logic is unchanged from v68.5.9.
+
+### Validation
+- Checked GitHub Markdown rendering, 14 local links and anchors, eight documented settings, and both configuration examples.
+
 ## v68.5.9 (2026-10-15)
 
 ### Fixed
