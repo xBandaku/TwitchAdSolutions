@@ -73,6 +73,37 @@ function recoveryHarness(file) {
 }
 
 for (const file of files) {
+    test(file + ' rolls back its pre-mute after a failed reload', async () => {
+        const h = recoveryHarness(file);
+        h.current.player.video.muted = false;
+        h.current.state.setSrc = () => { throw new Error('fixture setSrc failure'); };
+        assert.equal(await h.context.doTwitchPlayerTask(false, true, 'early'), false);
+        assert.equal(h.current.player.video.muted, false);
+        assert.equal(h.listeners.size, 0);
+        h.advance(13000);
+        assert.equal(h.current.player.video.muted, false);
+    });
+
+    test(file + ' only rolls back mute changes owned by the cancelled recovery', async () => {
+        for (const reason of ['pause', 'pip', 'mute', 'replacement', 'navigation', 'already-muted']) {
+            const h = recoveryHarness(file);
+            const original = h.current.player.video;
+            original.muted = reason === 'already-muted';
+            const pending = h.context.doTwitchPlayerTask(false, true, 'early');
+            if (reason === 'pause') h.context.playerBufferState.userPauseIntent = true;
+            if (reason === 'pip') h.context.document.pictureInPictureElement = {};
+            if (reason === 'mute') h.storage.set('video-muted', '{"default":true}');
+            if (reason === 'replacement') h.current.player = h.makePlayer();
+            if (reason === 'navigation') h.window.location.href = 'https://www.twitch.tv/other';
+            h.context.doTwitchPlayerTask.recovery.cancel();
+            assert.equal(await pending, false);
+            assert.equal(original.muted, !['pause', 'pip'].includes(reason), reason);
+            h.advance(13000);
+            assert.equal(original.muted, !['pause', 'pip'].includes(reason), reason + ' delayed callbacks');
+            if (reason === 'replacement') assert.equal(h.current.player.video.muted, true);
+        }
+    });
+
     test(file + ' waits through temporary player removal during replacement', async () => {
         const h = recoveryHarness(file);
         const pending = h.context.doTwitchPlayerTask(false, true, 'early');

@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Restore a temporary pre-mute when a reload fails or recovery is cancelled, while preserving user mute changes and leaving replacement videos alone.
+
 ## v68.5.19 (2026-10-15)
 
 ### Fixed
