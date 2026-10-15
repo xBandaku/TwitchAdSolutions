@@ -25,6 +25,7 @@ Fork of [ryanbr/TwitchAdSolutions](https://github.com/ryanbr/TwitchAdSolutions),
 - [Known extension conflicts](#known-extension-conflicts)
 - [Troubleshooting](#troubleshooting)
 - [Other solutions](#other-solutions)
+- [Development checks](#development-checks)
 - [License](#license)
 
 ## 1. Install vaft (Violentmonkey)
@@ -159,6 +160,22 @@ Alternatively:
 [Read this for a full list and descriptions.](full-list.md)
 
 [Also see this list maintained by @zGato.](https://github.com/zGato/ScrewTwitchAds)
+
+## Development checks
+
+Use Node.js 22 or 24. Install the locked test dependencies, then run the checks:
+
+```sh
+npm ci --ignore-scripts
+npm test
+npm run test:package
+npx playwright install
+npm run test:browser
+```
+
+Project checks run on Windows and Linux with both Node versions. They validate metadata, syntax, paired userscript/uBlock logic, worker serialization, and the existing runtime regressions. The packaging check produces all installable scripts and SHA-256 checksums in `release-artifact/`.
+
+Browser tests run the actual script code on offline Twitch fixtures in Chromium, Firefox, and WebKit. They cover startup, fetch/XHR, clip and origin exclusions, injected workers, cached ad-media replacement, and Brave retries. Reports and failure traces are available as workflow artifacts. These tests do not install browser extensions or verify Twitch's current live ad delivery.
 
 ## License
 

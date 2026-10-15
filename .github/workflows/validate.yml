@@ -1,42 +1,80 @@
-name: Validate JS
+name: Project checks
 
 on:
   push:
     paths:
       - "**/*.js"
       - ".github/workflows/**"
+      - "package*.json"
+      - ".github/**/*.py"
   pull_request:
     paths:
       - "**/*.js"
       - ".github/workflows/**"
+      - "package*.json"
+      - ".github/**/*.py"
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: project-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    name: Node ${{ matrix.node }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: ['22', '24']
     steps:
     - uses: actions/checkout@v7
 
     - uses: actions/setup-node@v7
       with:
-        node-version: '24'
+        node-version: ${{ matrix.node }}
+        cache: npm
 
-    - name: Install acorn
-      run: npm install -g acorn@8.19.0
+    - name: Install test dependencies
+      run: npm ci --ignore-scripts
 
-    - name: Validate JavaScript
-      shell: bash
+    - name: Test runtime regressions, metadata, syntax, and paired scripts
+      run: npm test
+
+    - name: Compile repository Python scripts
+      run: python -m compileall -q .github
+
+    - name: Verify installable artifacts
+      if: matrix.os == 'ubuntu-latest' && matrix.node == '24'
+      run: npm run test:package
+
+    - name: Upload installable artifacts and checksums
+      if: matrix.os == 'ubuntu-latest' && matrix.node == '24'
+      uses: actions/upload-artifact@v7
+      with:
+        name: scripts-${{ github.sha }}
+        path: release-artifact/
+        if-no-files-found: error
+        retention-days: 7
+
+  workflows:
+    name: Workflow lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+    - uses: actions/checkout@v7
+    - name: Validate every workflow with actionlint
+      env:
+        GH_TOKEN: ${{ github.token }}
       run: |
-        git ls-files -z '*.js' | while IFS= read -r -d '' script; do
-          echo "Validating $script"
-          case "$script" in
-            *ublock-origin*.js) tail -n +2 "$script" | acorn --ecma2022 > /dev/null ;;
-            *) acorn --ecma2022 "$script" > /dev/null ;;
-          esac
-        done
-
-    - name: Run unit tests
-      run: node tests/test.js
+        mkdir -p "$RUNNER_TEMP/actionlint"
+        gh release download v1.7.12 --repo rhysd/actionlint --pattern actionlint_1.7.12_linux_amd64.tar.gz --pattern actionlint_1.7.12_checksums.txt --dir "$RUNNER_TEMP/actionlint"
+        cd "$RUNNER_TEMP/actionlint"
+        sha256sum --check --ignore-missing actionlint_1.7.12_checksums.txt
+        tar -xzf actionlint_1.7.12_linux_amd64.tar.gz
+        ./actionlint -color "$GITHUB_WORKSPACE"/.github/workflows/*.yml

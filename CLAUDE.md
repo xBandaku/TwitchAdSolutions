@@ -82,7 +82,7 @@ All logs use `[AD DEBUG]` prefix. Logs in `.toString()` functions must use `cons
 
 ## Validation
 
-`npx acorn --ecma2022 file.js` (skip line 1 for uBlock files: `tail -n +2 file.js | npx acorn --ecma2022`). GitHub Actions validates on push/PR.
+Run `npm ci --ignore-scripts`, then `npm test` for syntax, metadata, paired-script/worker consistency, and runtime regressions. `npm run test:package` checks the installable artifacts. Run `npx playwright install` once, then `npm run test:browser` for offline Chromium, Firefox, and WebKit fixtures. GitHub Actions runs project checks on Node 22/24 and Windows/Linux, plus browser tests and workflow lint.
 
 ## Testing
 
