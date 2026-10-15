@@ -38,6 +38,30 @@ def field(name, value, inline=True):
     return {"name": clip(name, 256), "value": clip(value or "—", 1024), "inline": inline}
 
 
+def compare_stats(before, after):
+    if not before or not after or set(before) == {"0"}:
+        return None
+    token = os.environ.get("GH_TOKEN")
+    if not token:
+        return None
+    request = urllib.request.Request(
+        f"https://api.github.com/repos/{REPO}/compare/{before}...{after}",
+        headers={"Accept": "application/vnd.github+json",
+                 "Authorization": f"Bearer {token}",
+                 "User-Agent": "GitHub-Actions-Discord-Notifier"})
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            comparison = json.load(response)
+        files = comparison.get("files", [])
+        if len(files) >= 300 or comparison.get("total_commits", 0) > 250:
+            return None
+        return (sum(f.get("additions", 0) for f in files),
+                sum(f.get("deletions", 0) for f in files), len(files))
+    except (urllib.error.URLError, ValueError, KeyError) as exc:
+        print(f"Commit comparison unavailable: {type(exc).__name__}")
+        return None
+
+
 actor = event.get("sender") or {}
 actor_name = actor.get("login") or os.environ.get("GITHUB_ACTOR", "GitHub")
 actor_avatar = actor.get("avatar_url")
@@ -54,14 +78,16 @@ if EVENT == "push":
     for commit in commits[:12]:
         sha = (commit.get("id") or "")[:7]
         subject = (commit.get("message") or "").splitlines()[0] if commit.get("message") else "Commit"
-        added = len(commit.get("added") or [])
-        modified = len(commit.get("modified") or [])
-        removed = len(commit.get("removed") or [])
-        lines.append(f"• {markdown_link(sha, commit.get('url'))} {clip(subject, 130)} (＋{added} ~{modified} −{removed} files)")
+        lines.append(f"• {markdown_link(sha, commit.get('url'))} {clip(subject, 130)}")
     description = "\n".join(lines) or "Branch updated."
     if len(commits) > 12:
         description += f"\n…and {len(commits) - 12} more commits."
     fields = [field("Branch", branch), field("Commits in payload", len(commits))]
+    if not event.get("created") and not event.get("deleted"):
+        stats = compare_stats(event.get("before"), event.get("after"))
+        if stats is not None:
+            fields.append(field("Lines changed", f"+{stats[0]} / -{stats[1]}", False))
+            fields.append(field("Files changed", stats[2]))
     if event.get("forced"):
         fields.append(field("Force push", "Yes"))
     if event.get("deleted"):
