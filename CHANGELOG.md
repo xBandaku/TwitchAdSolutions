@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Add browser recovery fixtures with native media playback and simulated Twitch player state. Cover failed reload mute rollback, user mute intent, replacement-player resume, overlapping reloads, pause and PiP cancellation.
+
 - Run the full Node and browser suites before release publishing. Automatically build and verify the userscript, uBlock resource, ZIP bundle and checksums; normalize script line endings for consistent packages.
 
 - Upgrade an active soft recovery when a hard reload is requested. Keep a shared promise and bounded retries, with one final upgrade attempt allowed if both soft attempts already started.

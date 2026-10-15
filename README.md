@@ -132,6 +132,8 @@ Project checks run on Windows and Linux with both Node versions. They validate m
 
 Browser tests run the scripts on offline Twitch fixtures in Chromium, Firefox, and WebKit. GitHub Actions saves reports and failure traces. Release checks test note extraction and publishing restrictions. Live ad delivery and installation through browser extensions need manual testing.
 
+Recovery fixtures use native media elements with simulated Twitch player state. Windows WebKit skips the PCM media cases because its media backend cannot decode the fixture; Linux CI runs them. PiP state is simulated for headless tests.
+
 ## License
 
 Licensed under the [MIT License](LICENSE). See [CHANGELOG.md](CHANGELOG.md) for this fork's changes.
