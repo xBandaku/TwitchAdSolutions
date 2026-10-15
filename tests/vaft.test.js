@@ -33,6 +33,21 @@ function harness(file, bindings = {}) {
 }
 
 for (const file of files) {
+    test(file + ' uses the pre-reset freeze count for post-ad recovery', async () => {
+        for (const polls of [1, 2, 9]) {
+            const { context, messages } = harness(file);
+            const { url, stream } = registerStream(context, {
+                IsShowingAd: true, HasConfirmedAdAttrs: true, CleanPlaylistCount: 2,
+                NumStrippedAdSegments: 4, TotalAllStrippedPolls: polls,
+                CycleRescuedThisBreak: true, EarlyReloadCount: 0
+            });
+            await context.processM3U8(url, clean, null);
+            assert.equal(stream.IsShowingAd, false);
+            assert.equal(stream.TotalAllStrippedPolls, 0);
+            assert.equal(messages.filter(message => message.key === 'ReloadPlayer').length, polls > 2 ? 1 : 0);
+        }
+    });
+
     test(file + ' confirms advancing clean playlists and bounds marker bouncing', async () => {
         let now = 100000;
         const make = () => {
