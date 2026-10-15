@@ -1,22 +1,30 @@
 ## Unreleased
 
-- Coalesce overlapping reloads, reacquire the replacement player, verify playback advances, and retry at most twice with a 6-second limit per attempt. Stop on navigation, user pause, or PiP; preserve iOS soft reloads and settings changed during recovery. Adapted from Antidrew playback recovery.
+## v68.5.19 (2026-10-15)
 
-- Prefer backup video variants from the current codec family before matching resolution or frame rate. Port the testing selector into stable and normalize the first STREAM-INF attribute in testing. Fixes #12.
+### Fixed
 
-- Evaluate post-ad cycle recovery using the freeze count captured before break cleanup. Prolonged freezes can no longer skip the recovery reload after the counter resets. Fixes #10.
+- Accept GQL fetches with omitted headers, header tuples, Headers objects, URL inputs, and Request inputs without crashing the hook ([#13](https://github.com/xBandaku/TwitchAdSolutions/pull/13)).
+- Reject failed playlist body reads and processing errors instead of leaving requests pending ([#14](https://github.com/xBandaku/TwitchAdSolutions/pull/14)).
+- Process signed playlist URLs and extensionless v2 variants. Resolve relative variant URLs and preserve Request headers and cancellation ([#15](https://github.com/xBandaku/TwitchAdSolutions/pull/15), [#21](https://github.com/xBandaku/TwitchAdSolutions/pull/21)).
+- Limit backup requests to 4 seconds, including response bodies, and each backup search to 8 seconds. Validate HLS responses and wait 3 seconds before retrying an exhausted search ([#16](https://github.com/xBandaku/TwitchAdSolutions/pull/16)).
+- Process playlist state updates in order. Ignore obsolete stream sessions, superseded master responses, and actions from replaced workers ([#17](https://github.com/xBandaku/TwitchAdSolutions/pull/17)).
+- Require advancing clean playlists before ending an ad break. Keep the recovery timeout alive across alternating ad markers ([#18](https://github.com/xBandaku/TwitchAdSolutions/pull/18), fixes [#11](https://github.com/xBandaku/TwitchAdSolutions/issues/11)).
+- Use the freeze count captured before cleanup when deciding whether post-ad recovery needs a reload ([#19](https://github.com/xBandaku/TwitchAdSolutions/pull/19), fixes [#10](https://github.com/xBandaku/TwitchAdSolutions/issues/10)).
+- Prefer a backup from the current video codec family before matching resolution and frame rate ([#20](https://github.com/xBandaku/TwitchAdSolutions/pull/20), fixes [#12](https://github.com/xBandaku/TwitchAdSolutions/issues/12)).
+- Coalesce overlapping reloads, wait through player replacement, and resume the current player. Verify playback advances and stop after two attempts of up to 6 seconds each. Respect navigation, user pause, PiP, iOS soft reloads, and settings changed during recovery ([#21](https://github.com/xBandaku/TwitchAdSolutions/pull/21)).
 
-- Keep the first ad-end candidate alive across alternating markers, expire it only after clean playlist progress stops, and require advancing playlists for clean confirmations. Ports Antidrew distinct-playlist checks while keeping the three-confirmation threshold. Fixes #11.
+### Distribution
 
-- Serialize playlist state updates per stream, ignore out-of-order responses, and prevent obsolete sessions or replaced workers from controlling the current player. Adapted Antidrew session guards for Twitch embeds.
+- Applies to stable vaft 68.5.19 and testing vaft 689.0.0, including their uBlock variants.
+- Update the README's versioned uBlock resources to v68.5.19.
+- Backup deadlines, playlist ordering, clean-playlist checks, and recovery logic were selectively adapted from [Antidrew's playback recovery branch](https://github.com/antidrew/TwitchAdSolutions/commit/a1c0bbe161591ceb882f1f5e5c7731ac51df2653).
 
-- Bound backup playlist requests to 4 seconds including response bodies, cap a full backup search at 8 seconds, validate HLS responses, and wait 3 seconds before retrying an exhausted search. Ported Antidrew backup deadlines and retry backoff.
+### Validation
 
-- Route query-string and extensionless v2 media playlists through ad processing. Resolve relative variant URIs and probe the parsed cached variant instead of matching a .m3u8-only regular expression.
-
-- Reject playlist fetches when reading or processing the response fails, instead of leaving the request pending. Ported Antidrew promise propagation for media and master playlists.
-
-- Accept GQL requests with omitted headers, Headers objects, header tuples, URL inputs, and Request inputs without crashing the fetch hook. Ported from Antidrew with header normalization.
+- Passed 393 runtime assertions, 88 Node tests, and 123 offline browser tests across Chromium, Firefox, and WebKit.
+- GitHub checks passed on Node.js 22 and 24, Windows and Linux, including workflow lint.
+- The maintainer reported successful live Twitch playback with v68.5.19. The automated browser fixtures use offline Twitch pages.
 
 ## v68.5.10 (2026-10-15)
 
