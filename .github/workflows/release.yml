@@ -40,7 +40,7 @@ jobs:
       id: version
       run: |
         VERSION=$(grep -m1 '@version' vaft/vaft.user.js | sed 's/.*@version\s*//')
-        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
     - name: Set up Git user
       run: |
