@@ -1,0 +1,27 @@
+name: Release checks
+
+on:
+  push:
+    paths: ['.github/workflows/release*.yml', 'tests/release-workflow.test.js', 'CHANGELOG.md', 'vaft/vaft.user.js']
+  pull_request:
+    paths: ['.github/workflows/release*.yml', 'tests/release-workflow.test.js', 'CHANGELOG.md', 'vaft/vaft.user.js']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-node@v7
+      with:
+        node-version: '24'
+    - name: Test release notes and publishing restrictions
+      run: node --test tests/release-workflow.test.js

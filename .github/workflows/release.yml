@@ -2,69 +2,111 @@ name: Create Release
 
 on:
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Validate without creating a tag or publishing a release
+        type: boolean
+        default: true
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   create-release:
-    permissions:
-      contents: write
     name: Create Release
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
       with:
         fetch-depth: 0
 
-    - name: Install acorn
-      run: npm install -g acorn
-
-    - name: Validate userscripts
-      run: |
-        for f in vaft/vaft.user.js vaft/vaft_testing.user.js video-swap-new/video-swap-new.user.js strip/strip.user.js; do
-          echo "Validating $f..."
-          acorn --ecma2022 "$f" > /dev/null
-        done
-
-    - name: Validate uBlock scripts
-      run: |
-        for f in vaft/vaft-ublock-origin.js vaft/vaft-testing-ublock-origin.js video-swap-new/video-swap-new-ublock-origin.js video-swap-new/video-swap-new-ublock-origin-testing.js; do
-          echo "Validating $f..."
-          tail -n +2 "$f" | acorn --ecma2022 > /dev/null
-        done
-
-    - name: Get version from script
-      id: version
-      run: |
-        VERSION=$(grep -m1 '@version' vaft/vaft.user.js | sed 's/.*@version\s*//')
-        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-    - name: Set up Git user
-      run: |
-        git config user.name "github-actions[bot]"
-        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-    - name: Update permalink hashes in README
-      run: |
-        CURRENT_HASH=$(git rev-parse HEAD)
-        sed -i "s|/ryanbr/TwitchAdSolutions/[a-f0-9]\{40\}/|/ryanbr/TwitchAdSolutions/${CURRENT_HASH}/|g" README.md
-        git add README.md
-
-    - name: Create version commit and tag
-      run: |
-        git commit -m "v${{ steps.version.outputs.version }}"
-        git tag -a "v${{ steps.version.outputs.version }}" -m "Release v${{ steps.version.outputs.version }}"
-        git push origin master
-        git push origin "v${{ steps.version.outputs.version }}"
-
-    - name: Create Release
-      uses: softprops/action-gh-release@v2
+    - uses: actions/setup-node@v7
       with:
-        tag_name: "v${{ steps.version.outputs.version }}"
-        name: "Release v${{ steps.version.outputs.version }}"
-        body_path: CHANGELOG.md
+        node-version: '24'
+
+    - name: Install acorn
+      run: npm install -g acorn@8.19.0
+
+    - name: Validate JavaScript
+      shell: bash
+      run: |
+        git ls-files -z '*.js' | while IFS= read -r -d '' script; do
+          echo "Validating $script"
+          case "$script" in
+            *ublock-origin*.js) tail -n +2 "$script" | acorn --ecma2022 > /dev/null ;;
+            *) acorn --ecma2022 "$script" > /dev/null ;;
+          esac
+        done
+
+    - name: Run unit tests
+      run: node tests/test.js
+
+    - name: Prepare release notes
+      id: release
+      shell: bash
+      run: |
+        node <<'NODE'
+        const fs = require('node:fs');
+        const path = require('node:path');
+        const script = fs.readFileSync('vaft/vaft.user.js', 'utf8').replace(/\r\n/g, '\n');
+        const version = /^\/\/ @version[ \t]+(\d+\.\d+\.\d+)[ \t]*$/m.exec(script)?.[1];
+        if (!version) throw new Error('Expected a stable x.y.z @version in vaft/vaft.user.js');
+        const sections = fs.readFileSync('CHANGELOG.md', 'utf8').replace(/\r\n/g, '\n').split(/^## /m).slice(1).map(section => {
+          const [heading, ...body] = section.split('\n');
+          return { heading: heading.trim(), body: body.join('\n').trim() };
+        });
+        const notes = sections.find(section => section.heading === 'v' + version || section.heading.startsWith('v' + version + ' '))
+          ?? sections.find(section => section.heading === 'Unreleased');
+        if (!notes?.body) throw new Error('No release notes found for vaft ' + version);
+        fs.writeFileSync(path.join(process.env.RUNNER_TEMP, 'release-notes.md'), notes.body + '\n');
+        fs.appendFileSync(process.env.GITHUB_OUTPUT, 'version=' + version + '\n');
+        console.log('Prepared release notes for vaft ' + version);
+        NODE
+
+    - name: Summarize dry run
+      if: ${{ inputs.dry_run }}
+      env:
+        VERSION: ${{ steps.release.outputs.version }}
+      run: |
+        {
+          echo "Dry run for v$VERSION. No tag or release was created."
+          echo
+          echo 'Asset: vaft/vaft.user.js'
+          echo
+          cat "$RUNNER_TEMP/release-notes.md"
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Check publish target
+      if: ${{ !inputs.dry_run }}
+      env:
+        TAG: v${{ steps.release.outputs.version }}
+      run: |
+        if [[ "$GITHUB_REF" != refs/heads/master ]]; then
+          echo '::error::Release publishing requires the master branch.'
+          exit 1
+        fi
+        if git show-ref --verify --quiet "refs/tags/$TAG"; then
+          echo "::error::Tag $TAG already exists. Bump the userscript version before publishing."
+          exit 1
+        fi
+
+    - name: Publish release
+      if: ${{ !inputs.dry_run }}
+      uses: softprops/action-gh-release@v3
+      with:
+        tag_name: v${{ steps.release.outputs.version }}
+        target_commitish: ${{ github.sha }}
+        name: Release v${{ steps.release.outputs.version }}
+        body_path: ${{ runner.temp }}/release-notes.md
+        files: vaft/vaft.user.js
+        fail_on_unmatched_files: true
+        overwrite_files: false
+        make_latest: true
         draft: false
         prerelease: false
