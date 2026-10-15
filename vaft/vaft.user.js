@@ -2826,7 +2826,7 @@
                 const current = getPlayerAndState();
                 return doTwitchPlayerTask.latestRecovery === request && !request.cancelled
                     && window.location.href === route && !playerBufferState.userPauseIntent
-                    && current?.state?.props?.content?.type === 'live';
+                    && (!current?.state?.props?.content?.type || current.state.props.content.type === 'live');
             };
             const finish = success => {
                 clearTimeout(pollTimer);
@@ -2854,7 +2854,7 @@
             const poll = () => {
                 if (!isCurrent() || document.pictureInPictureElement) { finish(false); return; }
                 const current = getPlayerAndState();
-                const video = current.player?.getHTMLVideoElement?.();
+                const video = current?.player?.getHTMLVideoElement?.();
                 if (video && !video.ended && video.readyState >= 2) {
                     if (video !== observedVideo) {
                         observedVideo = video;
@@ -2885,6 +2885,11 @@
             const reload = () => {
                 if (!isCurrent() || document.pictureInPictureElement) { finish(false); return; }
                 const current = getPlayerAndState();
+                if (!current?.state?.setSrc) {
+                    console.log('[AD DEBUG] Player recovery stopped: replacement player unavailable');
+                    finish(false);
+                    return;
+                }
                 attempt++;
                 deadline = Date.now() + PlayerRecoveryTimeout;
                 observedVideo = null;

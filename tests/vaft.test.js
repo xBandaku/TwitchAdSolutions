@@ -73,6 +73,22 @@ function recoveryHarness(file) {
 }
 
 for (const file of files) {
+    test(file + ' waits through temporary player removal during replacement', async () => {
+        const h = recoveryHarness(file);
+        const pending = h.context.doTwitchPlayerTask(false, true, 'early');
+        h.context.getPlayerAndState = () => null;
+        h.advance(450);
+        assert.equal(h.context.doTwitchPlayerTask.recovery.promise, pending);
+        h.current.player = h.makePlayer();
+        h.context.getPlayerAndState = () => h.current;
+        h.advance(150);
+        assert.equal(h.current.player.plays, 1);
+        h.current.player.video.currentTime++;
+        h.advance(150);
+        assert.equal(await pending, true);
+        assert.equal(h.reloads.length, 1);
+    });
+
     test(file + ' forwards ordinary worker Request inputs without losing options', async () => {
         const calls = [];
         const { context } = harness(file, { fetch: async (...args) => { calls.push(args); return new Response('{}'); } });
