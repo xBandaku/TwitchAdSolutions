@@ -22,6 +22,23 @@ function harness(file, bindings = {}) {
 }
 
 for (const file of files) {
+    test(file + ' rejects media and master playlist failures', async () => {
+        for (const url of ['https://fixture.invalid/live.m3u8', 'https://usher.ttvnw.net/api/channel/hls/fixture.m3u8?token=fixture']) {
+            const bodyError = new Error('fixture body failed');
+            const { context } = harness(file, { fetch: async () => ({ status: 200, text: async () => { throw bodyError; } }) });
+            context.hookWorkerFetch();
+            await assert.rejects(context.fetch(url), bodyError);
+        }
+        const { context } = harness(file, { fetch: async () => new Response(clean) });
+        context.processM3U8 = async () => { throw new Error('fixture parser failed'); };
+        context.hookWorkerFetch();
+        await assert.rejects(context.fetch('https://fixture.invalid/live.m3u8'), /fixture parser failed/);
+        const response = new Response('unavailable', { status: 503 });
+        const failed = harness(file, { fetch: async () => response }).context;
+        failed.hookWorkerFetch();
+        assert.equal(await failed.fetch('https://fixture.invalid/live.m3u8'), response);
+    });
+
     test(file + ' forwards GQL fetch inputs and captures every supported header format', async () => {
         const calls = [], updates = [];
         const window = { fetch: async (...args) => { calls.push(args); return new Response('{}'); } };
