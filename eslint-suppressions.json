@@ -1,0 +1,81 @@
+{
+  "strip/strip.user.js": {
+    "no-empty": {
+      "count": 1
+    },
+    "no-undef": {
+      "count": 1
+    },
+    "no-useless-escape": {
+      "count": 1
+    }
+  },
+  "tests/test.js": {
+    "no-undef": {
+      "count": 3
+    },
+    "no-useless-assignment": {
+      "count": 6
+    }
+  },
+  "vaft/twitch-brave-fix-ublock-origin.js": {
+    "no-useless-assignment": {
+      "count": 1
+    }
+  },
+  "vaft/twitch-brave-fix.user.js": {
+    "no-useless-assignment": {
+      "count": 1
+    }
+  },
+  "vaft/vaft-ublock-origin.js": {
+    "no-useless-assignment": {
+      "count": 2
+    },
+    "no-useless-escape": {
+      "count": 1
+    }
+  },
+  "vaft/vaft.user.js": {
+    "no-useless-assignment": {
+      "count": 2
+    },
+    "no-useless-escape": {
+      "count": 1
+    }
+  },
+  "video-swap-new/video-swap-new-ublock-origin.js": {
+    "no-async-promise-executor": {
+      "count": 1
+    },
+    "no-empty": {
+      "count": 1
+    },
+    "no-undef": {
+      "count": 1
+    },
+    "no-useless-assignment": {
+      "count": 2
+    },
+    "no-useless-escape": {
+      "count": 1
+    }
+  },
+  "video-swap-new/video-swap-new.user.js": {
+    "no-async-promise-executor": {
+      "count": 1
+    },
+    "no-empty": {
+      "count": 1
+    },
+    "no-undef": {
+      "count": 1
+    },
+    "no-useless-assignment": {
+      "count": 2
+    },
+    "no-useless-escape": {
+      "count": 1
+    }
+  }
+}

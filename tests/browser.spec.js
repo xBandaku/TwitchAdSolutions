@@ -39,13 +39,16 @@ async function boot(page, context, file, url = 'https://www.twitch.tv/fixture-ch
         window.__nativeWorker = window.Worker;
         window.__gmCalls = [];
         window.__gmFail = false;
+        window.__gmPending = false;
+        window.__gmAborts = 0;
         window.GM_xmlHttpRequest = options => {
             window.__gmCalls.push({ url: options.url, method: options.method, data: options.data, headers: options.headers });
             queueMicrotask(() => {
+                if (window.__gmPending) return;
                 if (window.__gmFail) options.onerror({ error: 'fixture transport failure' });
                 else options.onload({ status: 200, responseText: '{"data":{"fixture":true}}', responseHeaders: 'content-type: application/json\r\n' });
             });
-            return { abort() {} };
+            return { abort() { window.__gmAborts++; options.onabort(); } };
         };
         window.GM = { xmlHttpRequest: window.GM_xmlHttpRequest };
         Object.defineProperty(navigator, 'brave', { configurable: true, value: { isBrave: async () => true } });
@@ -518,21 +521,24 @@ for (const file of scripts.filter(script => script.file.includes('brave-fix')).m
     });
 }
 
-for (const requestInput of [false, true]) {
-    test('Brave userscript retries a rejected ' + (requestInput ? 'Request' : 'URL') + ' through the manager transport', async ({ page, context }) => {
-        await boot(page, context, 'vaft/twitch-brave-fix.user.js');
-        const result = await page.evaluate(async requestInput => {
-            const url = 'https://gql.twitch.tv/gql';
-            const init = { method: 'POST', body: '{"operationName":"Fixture"}' };
-            const response = await (requestInput ? fetch(new Request(url, init)) : fetch(url, init));
-            return { body: await response.json(), calls: window.__gmCalls };
-        }, requestInput);
-        expect(result.body).toEqual({ data: { fixture: true } });
-        expect(result.calls).toHaveLength(1);
-        expect(result.calls[0]).toMatchObject({ url: 'https://gql.twitch.tv/gql', method: 'POST', data: '{"operationName":"Fixture"}' });
-        expect(result.calls[0].headers['Sec-Ch-Ua']).toContain('Google Chrome');
-        expect(result.calls[0].headers['Sec-Ch-Ua']).not.toContain('Brave');
-    });
+for (const url of ['https://gql.twitch.tv/gql', 'https://gql.twitch.tv/integrity', 'https://passport.twitch.tv/integrity']) {
+    for (const requestInput of [false, true]) {
+        test('Brave userscript retries a rejected ' + (requestInput ? 'Request' : 'URL') + ' at ' + url + ' through the manager transport', async ({ page, context }) => {
+            await boot(page, context, 'vaft/twitch-brave-fix.user.js');
+            await context.route(url, route => route.fulfill({ contentType: 'application/json', body: '{"errors":[{"message":"fixture fingerprint rejection"}]}' }));
+            const result = await page.evaluate(async ({ requestInput, url }) => {
+                const init = { method: 'POST', body: '{"operationName":"Fixture"}' };
+                const response = await (requestInput ? fetch(new Request(url, init)) : fetch(url, init));
+                return { body: await response.json(), calls: window.__gmCalls };
+            }, { requestInput, url });
+            expect(result.body).toEqual({ data: { fixture: true } });
+            expect(result.calls).toHaveLength(1);
+            expect(result.calls[0]).toMatchObject({ url, method: 'POST', data: '{"operationName":"Fixture"}' });
+            expect(Object.keys(result.calls[0].headers).map(name => name.toLowerCase())).not.toContain('host');
+            expect(result.calls[0].headers['Sec-Ch-Ua']).toContain('Google Chrome');
+            expect(result.calls[0].headers['Sec-Ch-Ua']).not.toContain('Brave');
+        });
+    }
 }
 
 test('Brave userscript preserves the original response when manager transport fails', async ({ page, context }) => {
@@ -541,4 +547,44 @@ test('Brave userscript preserves the original response when manager transport fa
         window.__gmFail = true;
         return (await fetch('https://gql.twitch.tv/gql', { method: 'POST', body: '{}' })).json();
     })).toEqual({ errors: [{ message: 'fixture fingerprint rejection' }] });
+});
+
+for (const userscriptFirst of [false, true]) {
+    test('Brave retry survives both helper load orders, userscript first=' + userscriptFirst, async ({ page, context }) => {
+        const files = ['vaft/twitch-brave-fix.user.js', 'vaft/twitch-brave-fix-ublock-origin.js'];
+        if (!userscriptFirst) files.reverse();
+        await boot(page, context, files[0]);
+        await page.addScriptTag({ content: readScript(files[1]) });
+        await page.addScriptTag({ content: readScript(files[0]) });
+        expect(await page.evaluate(async () => ({
+            body: await (await fetch('https://gql.twitch.tv/gql')).json(), calls: window.__gmCalls.length
+        }))).toEqual({ body: { data: { fixture: true } }, calls: 1 });
+    });
+}
+
+test('Brave userscript aborts a pending manager request', async ({ page, context }) => {
+    await boot(page, context, 'vaft/twitch-brave-fix.user.js');
+    await page.evaluate(() => {
+        window.__gmPending = true;
+        window.__retryController = new AbortController();
+        window.__retryResult = fetch('https://gql.twitch.tv/gql', { signal: window.__retryController.signal })
+            .then(() => 'resolved', error => error.name);
+    });
+    await expect.poll(() => page.evaluate(() => window.__gmCalls.length)).toBe(1);
+    await page.evaluate(() => window.__retryController.abort());
+    expect(await page.evaluate(() => window.__retryResult)).toBe('AbortError');
+    expect(await page.evaluate(() => window.__gmAborts)).toBe(1);
+});
+
+test('Brave userscript bounds a silent manager request', async ({ page, context }) => {
+    await page.clock.install();
+    await boot(page, context, 'vaft/twitch-brave-fix.user.js');
+    await page.evaluate(() => {
+        window.__gmPending = true;
+        window.__retryResult = fetch('https://gql.twitch.tv/gql').then(response => response.json());
+    });
+    await expect.poll(() => page.evaluate(() => window.__gmCalls.length)).toBe(1);
+    await page.clock.fastForward(15000);
+    expect(await page.evaluate(() => window.__retryResult)).toEqual({ errors: [{ message: 'fixture fingerprint rejection' }] });
+    expect(await page.evaluate(() => window.__gmAborts)).toBe(1);
 });

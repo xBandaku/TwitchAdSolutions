@@ -99,6 +99,7 @@ Use Node.js 22 or 24 and Python 3. Changes go to `master` after validation.
 
 ```sh
 npm ci --ignore-scripts
+npm run lint
 npm test
 npm run test:package
 npx playwright install
@@ -106,6 +107,8 @@ npm run test:browser
 ```
 
 Run `npm run benchmark` for timings against the current vaft functions. Strip measurements include stream setup and cache reset.
+
+ESLint checks source and tests, including uBlock files with their resource headers removed during linting. Existing lint violations are recorded in `eslint-suppressions.json`; new violations fail the check.
 
 Checks cover syntax, metadata, matching userscript/uBlock logic, serialized workers, and runtime regressions. Packaging writes the supported scripts and SHA256SUMS to `release-artifact/`.
 

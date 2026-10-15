@@ -20,10 +20,9 @@ twitch-brave-fix.js text/javascript
         if (_clipHost === 'clips.twitch.tv' || /^\/[^/]+\/clip\/[^/]+/.test(_clipPath)) return;
     }
     'use strict';
-    const ourVersion = 5;
-    console.log('[TwitchBraveFix-uBO] v1.3.1 loading');
-    // Shared version flag with the .user.js variant — whichever has the higher version wins,
-    // so a user running both ends up with one active instance instead of duplicate hooks.
+    const ourVersion = 7;
+    console.log('[TwitchBraveFix-uBO] v1.3.3 loading');
+    // The userscript can add its retry transport after this diagnostic helper loads.
     if (typeof window.twitchBraveFixVersion !== 'undefined' && window.twitchBraveFixVersion >= ourVersion) {
         console.log('[TwitchBraveFix-uBO] CONFLICT: skipped — another instance already active (v' + window.twitchBraveFixVersion + ')');
         return;
@@ -85,9 +84,14 @@ twitch-brave-fix.js text/javascript
 
     function isInterceptable(url) {
         if (typeof url !== 'string') return false;
-        return url.indexOf('gql.twitch.tv/gql') !== -1
-            || url.indexOf('gql.twitch.tv/integrity') !== -1
-            || url.indexOf('passport.twitch.tv/integrity') !== -1;
+        try {
+            const parsed = new URL(url, document.location.href);
+            if (parsed.protocol !== 'https:' || parsed.port || parsed.username || parsed.password) return false;
+            return (parsed.hostname === 'gql.twitch.tv' && (parsed.pathname === '/gql' || parsed.pathname === '/integrity'))
+                || (parsed.hostname === 'passport.twitch.tv' && parsed.pathname === '/integrity');
+        } catch (_e) {
+            return false;
+        }
     }
 
     let _errorReported = false;

@@ -1,3 +1,29 @@
+## v68.5.27 (2026-10-15)
+
+- Bound Brave manager retries to 15 seconds and pass caller cancellation through to the manager transport. Keep the retry hook active in either userscript/uBlock helper load order. Brave helper version 1.3.3 (internal version 7).
+- Handle omitted fetch options, Request inputs and standard header formats in video-swap-new. Keep the token relay timeout active through response body reads. Version 1.89 (internal version 57), in both install formats.
+- Add ESLint with browser, worker and Node environments, uBlock resource processing and CI checks. Record existing violations in an ESLint suppression baseline.
+- Restrict both Brave helpers to the HTTPS Twitch GQL and integrity endpoints. Reject lookalike hosts, unrelated paths, credentials and nonstandard ports.
+- Remove the Brave userscript's hard-coded Host header so retries to passport.twitch.tv use the destination host.
+- Set project Prettier defaults to four spaces and single quotes; exclude uBlock resources and generated release artifacts.
+
+
+### Validation
+
+- Passed ESLint with 32 pre-existing findings recorded in its suppression baseline, 255 runtime assertions and 125 Node tests.
+- Passed 154 browser tests locally. Windows WebKit skipped 20 native-media tests; the release workflow runs those cases on Linux.
+- Added regression coverage for Brave helper load order, retry timeout/cancellation, modern manager failures, and video-swap-new fetch inputs and response-body timeout.
+
+### Distribution
+
+- Release version 68.5.27 (vaft internal version 113), Brave helper 1.3.3 (internal version 7), and video-swap-new 1.89 (internal version 57).
+- Vaft's playback logic is unchanged in this patch; its version advances with the release bundle.
+- Includes all seven installable scripts in the ZIP bundle and SHA256SUMS.
+
+### Known issue
+
+- The Brave userscript still retries GraphQL responses containing errors, including partially successful responses. Restricting those retries is deferred.
+
 ## v68.5.26 (2026-10-15)
 
 ### Fixed

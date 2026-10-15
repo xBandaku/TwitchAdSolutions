@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         TwitchAdSolutions (twitch-brave-fix)
 // @namespace    https://github.com/ryanbr/TwitchAdSolutions
-// @version      1.3.1
-// @description  Bypass Brave fingerprint detection on Twitch GQL/integrity requests by retrying via GM_xmlHttpRequest with header spoofs (Sec-Ch-Ua brand rewrite from Brave to Google Chrome with synthetic fallback when userAgentData hidden, Sec-Ch-Ua-Platform, Sec-Ch-Ua-Mobile, Firefox User-Agent, explicit Origin/Referer/Host, Accept-Language). Also hides navigator.brave and rebrands navigator.userAgentData.brands / getHighEntropyValues from "Brave" to "Google Chrome" so Twitch JS can't preemptively flag the session. Per-request retry: each interceptable request goes native first, sniffs for `errors` in the response body, and retries that specific request via GM xhr if needed — fixes occasional fingerprint-driven failures (e.g. Brave login on www.twitch.tv) without paying the GM xhr tax on every successful request. Companion to vaft / video-swap-new. A uBlock Origin scriptlet variant (twitch-brave-fix-ublock-origin.js) is also available but covers JS-surface spoofs only — the GM xhr header-retry path is userscript-exclusive (Tampermonkey / Violentmonkey / Greasemonkey 4+).
+// @version      1.3.3
+// @description  Bypass Brave fingerprint detection on Twitch GQL/integrity requests by retrying via GM_xmlHttpRequest with header spoofs (Sec-Ch-Ua brand rewrite from Brave to Google Chrome with synthetic fallback when userAgentData hidden, Sec-Ch-Ua-Platform, Sec-Ch-Ua-Mobile, Firefox User-Agent, explicit Origin/Referer, Accept-Language). Also hides navigator.brave and rebrands navigator.userAgentData.brands / getHighEntropyValues from "Brave" to "Google Chrome" so Twitch JS can't preemptively flag the session. Per-request retry: each interceptable request goes native first, sniffs for `errors` in the response body, and retries that specific request via GM xhr if needed — fixes occasional fingerprint-driven failures (e.g. Brave login on www.twitch.tv) without paying the GM xhr tax on every successful request. Companion to vaft / video-swap-new. A uBlock Origin scriptlet variant (twitch-brave-fix-ublock-origin.js) is also available but covers JS-surface spoofs only — the GM xhr header-retry path is userscript-exclusive (Tampermonkey / Violentmonkey / Greasemonkey 4+).
 // @updateURL    https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/twitch-brave-fix.user.js
 // @downloadURL  https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/twitch-brave-fix.user.js
 // @author       https://github.com/ryanbr/TwitchAdSolutions
@@ -27,13 +27,12 @@
         if (_clipHost === 'clips.twitch.tv' || /^\/[^/]+\/clip\/[^/]+/.test(_clipPath)) return;
     }
     'use strict';
-    const ourVersion = 5;
-    console.log('[TwitchBraveFix] v1.3.1 loading');
-    if (typeof window.twitchBraveFixVersion !== 'undefined' && window.twitchBraveFixVersion >= ourVersion) {
-        console.log('[TwitchBraveFix] CONFLICT: skipped — another instance already active (v' + window.twitchBraveFixVersion + ')');
+    const ourVersion = 7;
+    console.log('[TwitchBraveFix] v1.3.3 loading');
+    if (typeof window.twitchBraveFixRetryVersion !== 'undefined' && window.twitchBraveFixRetryVersion >= ourVersion) {
+        console.log('[TwitchBraveFix] CONFLICT: skipped — another instance already active (v' + window.twitchBraveFixRetryVersion + ')');
         return;
     }
-    window.twitchBraveFixVersion = ourVersion;
 
     // Hide navigator.brave before Twitch's bundle runs so navigator.brave.isBrave() can't preemptively
     // flag the session. Brave exposes this property even in Strict shields mode, so it's the most
@@ -87,13 +86,20 @@
         return;
     }
 
+    window.twitchBraveFixVersion = Math.max(window.twitchBraveFixVersion || 0, ourVersion);
+    window.twitchBraveFixRetryVersion = ourVersion;
     const realFetch = window.fetch;
 
     function isInterceptable(url) {
         if (typeof url !== 'string') return false;
-        return url.indexOf('gql.twitch.tv/gql') !== -1
-            || url.indexOf('gql.twitch.tv/integrity') !== -1
-            || url.indexOf('passport.twitch.tv/integrity') !== -1;
+        try {
+            const parsed = new URL(url, document.location.href);
+            if (parsed.protocol !== 'https:' || parsed.port || parsed.username || parsed.password) return false;
+            return (parsed.hostname === 'gql.twitch.tv' && (parsed.pathname === '/gql' || parsed.pathname === '/integrity'))
+                || (parsed.hostname === 'passport.twitch.tv' && parsed.pathname === '/integrity');
+        } catch (_e) {
+            return false;
+        }
     }
 
     // Spoof values are derived from navigator.userAgent / navigator.userAgentData, which don't
@@ -203,8 +209,10 @@
         return out;
     }
 
-    async function gmRetry(url, method, bodyText, baseHeaders) {
+    async function gmRetry(url, method, bodyText, baseHeaders, signal) {
+        signal?.throwIfAborted();
         const spoofedSecChUa = await getSpoofedSecChUa();
+        signal?.throwIfAborted();
         const headers = Object.assign({}, baseHeaders || {});
         if (spoofedSecChUa) headers['Sec-Ch-Ua'] = spoofedSecChUa;
         headers['Sec-Ch-Ua-Mobile'] = SPOOF.mobile;
@@ -213,21 +221,46 @@
         headers['Accept-Language'] = 'en-US,en;q=0.9';
         headers['Referer'] = 'https://www.twitch.tv/';
         headers['Origin'] = 'https://www.twitch.tv/';
-        headers['Host'] = 'gql.twitch.tv';
         return new Promise((resolve, reject) => {
-            gmXhr({
-                method: method || 'GET',
-                url: url,
-                data: bodyText,
-                headers: headers,
-                onload: resp => resolve(resp),
-                onerror: err => reject(err),
-                ontimeout: () => reject(new Error('TwitchBraveFix: GM_xmlHttpRequest timeout')),
-            });
+            let request;
+            let settled = false;
+            const finish = (settle, value) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timeoutId);
+                signal?.removeEventListener('abort', abort);
+                settle(value);
+            };
+            const abort = () => {
+                finish(reject, signal.reason);
+                request?.abort?.();
+            };
+            const timeoutMs = 15000;
+            const timeoutId = setTimeout(() => {
+                finish(reject, new DOMException('TwitchBraveFix: GM_xmlHttpRequest timeout', 'TimeoutError'));
+                request?.abort?.();
+            }, timeoutMs);
+            signal?.addEventListener('abort', abort, { once: true });
+            try {
+                request = gmXhr({
+                    method: method || 'GET',
+                    url: url,
+                    data: bodyText,
+                    headers: headers,
+                    timeout: timeoutMs,
+                    onload: resp => finish(resolve, resp),
+                    onerror: err => finish(reject, err),
+                    onabort: () => finish(reject, new DOMException('The request was aborted', 'AbortError')),
+                    ontimeout: () => finish(reject, new DOMException('TwitchBraveFix: GM_xmlHttpRequest timeout', 'TimeoutError'))
+                });
+                if (typeof request?.then === 'function') request.then(resp => finish(resolve, resp), err => finish(reject, err));
+            } catch (error) {
+                finish(reject, error);
+            }
         });
     }
 
-    async function maybeRetryOnErrors(url, method, headers, response, readBody) {
+    async function maybeRetryOnErrors(url, method, headers, response, readBody, signal) {
         if (response.status !== 200) return response;
         const cloned = response.clone();
         let bodyTextResp;
@@ -245,9 +278,10 @@
         // happy path doesn't pay for it on every interceptable request.
         const bodyText = await readBody();
         try {
-            const gmResp = await gmRetry(url, method, bodyText, headers);
+            const gmResp = await gmRetry(url, method, bodyText, headers, signal);
             return gmRespToFetchResp(gmResp);
         } catch (e) {
+            signal?.throwIfAborted();
             console.log('[TwitchBraveFix] GM_xmlHttpRequest retry failed; returning original errored response:', (e && e.message) || e);
             return new Response(bodyTextResp, {
                 status: response.status,
@@ -270,7 +304,7 @@
         const bodyClone = (input instanceof Request) ? input.clone() : null;
         const readBody = () => readBodyAsText(bodyClone || input, init);
         const response = await realFetch.call(this, input, init);
-        return maybeRetryOnErrors(url, method, headers, response, readBody);
+        return maybeRetryOnErrors(url, method, headers, response, readBody, init?.signal ?? (input instanceof Request ? input.signal : undefined));
     }
 
     window.fetch = function _braveFixFetch(input, init) {
