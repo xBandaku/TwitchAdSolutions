@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Prefer backup video variants from the current codec family before matching resolution or frame rate. Port the testing selector into stable and normalize the first STREAM-INF attribute in testing. Fixes #12.
+
 - Evaluate post-ad cycle recovery using the freeze count captured before break cleanup. Prolonged freezes can no longer skip the recovery reload after the counter resets. Fixes #10.
 
 - Keep the first ad-end candidate alive across alternating markers, expire it only after clean playlist progress stops, and require advancing playlists for clean confirmations. Ports Antidrew distinct-playlist checks while keeping the three-confirmation threshold. Fixes #11.

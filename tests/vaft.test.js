@@ -33,6 +33,21 @@ function harness(file, bindings = {}) {
 }
 
 for (const file of files) {
+    test(file + ' ranks backup codec compatibility ahead of resolution', () => {
+        const { context } = harness(file);
+        const variant = (codec, resolution, name) => '#EXT-X-STREAM-INF:' + (codec ? 'CODECS="' + codec + '",' : '') + 'RESOLUTION=' + resolution + ',FRAME-RATE=60,BANDWIDTH=3000000\nhttps://fixture.invalid/' + name + '\n';
+        const hevc = variant('hvc1.1.6.L120', '1920x1080', 'hevc');
+        const avc = variant('mp4a.40.2,avc1.4d4028', '1280x720', 'avc');
+        const av1 = variant('av01.0.08M.08', '1920x1080', 'av1');
+        const unknown = variant(null, '1920x1080', 'unknown');
+        const resolution = { Resolution: '1920x1080', FrameRate: 60, Codecs: 'avc1.4d4028' };
+        assert.equal(context.getStreamUrlForResolution('#EXTM3U\n' + hevc + unknown + av1 + avc, resolution), 'https://fixture.invalid/avc');
+        assert.equal(context.getStreamUrlForResolution('#EXTM3U\n' + hevc + unknown + av1, resolution), 'https://fixture.invalid/unknown');
+        assert.equal(context.getStreamUrlForResolution('#EXTM3U\n' + avc + hevc, { ...resolution, Codecs: 'hvc1.1' }), 'https://fixture.invalid/hevc');
+        assert.equal(context.getStreamUrlForResolution('#EXTM3U\n' + avc + av1, { ...resolution, Codecs: 'av01.0' }), 'https://fixture.invalid/av1');
+        assert.equal(context.getStreamUrlForResolution('#EXTM3U\n' + hevc, resolution), 'https://fixture.invalid/hevc');
+    });
+
     test(file + ' uses the pre-reset freeze count for post-ad recovery', async () => {
         for (const polls of [1, 2, 9]) {
             const { context, messages } = harness(file);

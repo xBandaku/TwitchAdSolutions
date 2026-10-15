@@ -45,7 +45,7 @@ const workerOptions = ['workerStringConflicts', 'workerStringReinsert'].map(name
 const helperNames = [
     'hasAdTags', 'getMatchedAdSignifiers', 'parseAttributes',
     'getServerTimeFromM3u8', 'replaceServerTimeInM3u8',
-    'getStreamUrlForResolution', 'stripAdSegments', 'isValidWorker'
+    'getStreamUrlForResolution', 'videoCodecFamily', 'stripAdSegments', 'isValidWorker'
 ];
 vm.runInContext([
     scriptFunction(helperSource, 'declareOptions'),
