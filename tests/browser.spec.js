@@ -128,23 +128,29 @@ async function bootRecovery(page, context, file) {
         document.body.appendChild(start);
         const source = `
             self.addEventListener('message', event => {
-                if (!event.data.fixtureReload) return;
-                self.postMessage({ key: 'ReloadPlayer', kind: event.data.kind, channelName: 'fixture-channel', sessionId: 1 });
+                if (event.data.fixtureAdBreak) {
+                    self.postMessage({ key: 'UpdateAdBlockBanner', hasAds: true, isMidroll: true,
+                        isStrippingAdSegments: false, activeBackupPlayerType: 'popout', channelName: 'fixture-channel', sessionId: 1 });
+                } else if (event.data.fixtureReload) {
+                    self.postMessage({ key: 'ReloadPlayer', kind: event.data.kind, channelName: 'fixture-channel', sessionId: 1 });
+                } else return;
                 self.postMessage({ fixtureAck: true });
             });
             self.postMessage({ fixtureReady: true });
         `;
         const worker = new Worker(URL.createObjectURL(new Blob([source], { type: 'text/javascript' })));
         await new Promise(resolve => worker.addEventListener('message', event => { if (event.data.fixtureReady) resolve(); }));
-        fixture.reload = kind => new Promise(resolve => {
+        fixture.send = message => new Promise(resolve => {
             const ack = event => {
                 if (!event.data.fixtureAck) return;
                 worker.removeEventListener('message', ack);
                 resolve();
             };
             worker.addEventListener('message', ack);
-            worker.postMessage({ fixtureReload: true, kind });
+            worker.postMessage(message);
         });
+        fixture.reload = kind => fixture.send({ fixtureReload: true, kind });
+        fixture.adBreak = () => fixture.send({ fixtureAdBreak: true });
     });
     await expect.poll(() => page.evaluate(() => window.__recoveryFixture.current.video.readyState)).toBeGreaterThanOrEqual(2);
     await page.locator('#fixture-start').click();
@@ -226,6 +232,35 @@ for (const script of scripts) {
                 reloads: window.__recoveryFixture.reloads,
                 originalConnected: window.__recoveryFixture.players[0].video.isConnected
             }))).toEqual({ reloads: [{ isNewMediaPlayerInstance: true, refreshAccessToken: true }], originalConnected: false });
+        });
+
+        test(script.file + ' recovers a frozen native ad backup without stripped segments', async ({ page, context }) => {
+            await bootRecovery(page, context, script.file);
+            await page.clock.runFor(600);
+            const baseline = await page.evaluate(() => window.__recoveryFixture.current.video.currentTime);
+            await expect.poll(() => page.evaluate(() => window.__recoveryFixture.current.video.currentTime)).toBeGreaterThan(baseline + 0.2);
+            await page.clock.runFor(600);
+            await page.evaluate(async () => {
+                const fixture = window.__recoveryFixture;
+                await fixture.adBreak();
+                fixture.current.video.playbackRate = 0;
+            });
+            expect(await page.evaluate(() => ({
+                paused: window.__recoveryFixture.current.video.paused,
+                ranges: window.__recoveryFixture.current.video.buffered.length
+            }))).toEqual({ paused: false, ranges: 1 });
+            await page.clock.runFor(17400);
+            expect(await page.evaluate(() => window.__recoveryFixture.reloads.length)).toBe(0);
+            await page.clock.runFor(1800);
+            expect(await page.evaluate(() => window.__recoveryFixture.reloads)).toEqual([
+                { isNewMediaPlayerInstance: true, refreshAccessToken: true }
+            ]);
+            await expect.poll(() => page.evaluate(() => window.__recoveryFixture.current.video.readyState)).toBeGreaterThanOrEqual(2);
+            await page.evaluate(() => { window.__recoveryFixture.current.video.currentTime = 17; });
+            await expect.poll(() => page.evaluate(() => window.__recoveryFixture.current.video.readyState)).toBeGreaterThanOrEqual(2);
+            await page.clock.runFor(150);
+            await expect.poll(() => page.evaluate(() => window.__recoveryFixture.current.video.currentTime)).toBeGreaterThan(17.2);
+            expect(states.get(page).logs.some(message => message.includes('Ad backup playhead frozen'))).toBe(true);
         });
 
         for (const navigateDuringRecovery of [false, true]) {

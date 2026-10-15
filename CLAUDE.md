@@ -30,7 +30,7 @@ uBlock files have `twitch-videoad.js text/javascript` as line 1 (not valid JS �
 
 ## Versions
 
-Bump `@version` (userscript header) and `ourTwitchAdSolutionsVersion` together for functional changes. Current: vaft 68.5.25/111, video-swap-new 1.88/56, strip 1.10/27.
+Bump `@version` (userscript header) and `ourTwitchAdSolutionsVersion` together for functional changes. Current: vaft 68.5.26/112, video-swap-new 1.88/56, strip 1.10/27.
 
 ## localStorage Config
 
@@ -62,6 +62,7 @@ All read at init, injected into worker blob:
 - **Reload cooldown** — 30s default, auto-escalates to 90s if 3+ reloads in 5 minutes.
 - **Reload cap** — buffer monitor reloads at most once per recovery window (`recoveryReloadUsed`).
 - **Grace periods** — 15s after reload, 10s after backup switch. Buffer monitor skips fixes during these.
+- Ad backup stalls: after observed playback, eight seconds without playhead movement during a break requests a hard reset even without stripped segments or multiple buffered ranges. Respect pause, seek and existing grace periods. Allow one recovery request per frozen run; re-arm after playback progresses beyond reload grace.
 - **Drift correction** — `startDriftCorrection(videoElement)` shared function. 1.1× playback rate, 30s safety timeout. Restarts fresh on re-entry (clears stale timers). Used by post-reload drift and buffer gap seek.
 - **Reload routing**: worker messages with kind early request a new player and fresh token. Required post-ad resets use early after stripping or committed backup playback. Other reload requests remain soft. Apple touch devices keep the existing player while refreshing the token. The reset flushes mixed-source media buffers.
 - **Early reload** — fires during prolonged all-stripped freeze. Threshold: 3 polls (~6s), or 1 poll when recovery cache <3 segments (thin-cache fast path). Budget: `max(1, PodLength)` or `max(2, PodLength)` when thin. `EarlyReloadTriggered` resets on "still ads" (both sticky + normal paths) to allow budget-based re-fire. Override via `twitchAdSolutions_earlyReloadPollThreshold`.

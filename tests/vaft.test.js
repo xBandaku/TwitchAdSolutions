@@ -67,7 +67,105 @@ function recoveryHarness(file) {
     return { context, current, makePlayer, advance, storage, reloads, window, listeners };
 }
 
+function monitorHarness(file, hasPlayed = true) {
+    const h = recoveryHarness(file);
+    Object.assign(h.context, {
+        isActivelyStrippingAds: false, DisablePostBreakWedge: true,
+        hideTwitchAdOverlays() {}, updateAdblockBanner() {}
+    });
+    Object.assign(h.context.playerBufferState, {
+        lastFixTime: 0, lastBackupSwitchAt: 0, lastReloadAt: 0,
+        gapJumpLastPosition: -1, gapJumpStuckTicks: 0
+    });
+    Object.assign(h.current.player, {
+        getState: () => 'Playing', getBufferDuration: () => 30
+    });
+    h.current.player.core.state = {
+        position: 10, bufferedPosition: 40,
+        path: 'https://usher.ttvnw.net/api/v2/channel/hls/fixture.m3u8?token=fixture'
+    };
+    Object.assign(h.current.player.video, {
+        readyState: 4, networkState: 1, seeking: false,
+        addEventListener() {}, buffered: { length: 1, start: () => 0, end: () => 40 }
+    });
+    h.current.state.setSrc = options => {
+        h.reloads.push(options);
+        h.current.player.video.buffered = { length: 0 };
+        h.current.player.video.readyState = 1;
+    };
+    h.context.monitorPlayerBuffering();
+    if (hasPlayed) h.current.player.video.currentTime++;
+    h.advance(600);
+    return h;
+}
+
 for (const file of files) {
+    test(file + ' recovers a frozen ad backup without stripped segments or buffer gaps', async () => {
+        for (const readyState of [2, 4]) {
+            const h = monitorHarness(file);
+            h.context.playerBufferState.inAdBreak = true;
+            h.current.player.video.readyState = readyState;
+            h.advance(7800);
+            assert.equal(h.reloads.length, 0, 'short stalls do not reload');
+            h.advance(1200);
+            assert.equal(h.reloads.length, 1, 'frozen playhead triggers recovery, readyState=' + readyState);
+            assert.equal(h.reloads[0].isNewMediaPlayerInstance, true);
+            assert.equal(h.reloads[0].refreshAccessToken, true);
+            h.advance(30000);
+            assert.equal(h.reloads.length, 2, 'only the bounded recovery retries the same frozen video');
+            assert.equal(await h.context.doTwitchPlayerTask.latestRecovery.promise, false);
+        }
+    });
+
+    test(file + ' gives ad switches and reloads grace before frozen-playhead recovery', () => {
+        for (const [field, delay] of [['lastBackupSwitchAt', 10000], ['lastReloadAt', 15000]]) {
+            const h = monitorHarness(file);
+            h.context.playerBufferState.inAdBreak = true;
+            h.context.playerBufferState[field] = 100600;
+            h.advance(delay + 7200);
+            assert.equal(h.reloads.length, 0, field);
+            h.advance(2400);
+            assert.equal(h.reloads.length, 1, field);
+            h.context.doTwitchPlayerTask.recovery.cancel();
+        }
+    });
+
+    test(file + ' re-arms ad stall recovery only after playback resumes beyond reload grace', () => {
+        const h = monitorHarness(file);
+        h.context.playerBufferState.inAdBreak = true;
+        h.advance(9000);
+        h.context.doTwitchPlayerTask.recovery.cancel();
+        h.advance(16000);
+        assert.equal(h.reloads.length, 1);
+        h.current.player.video.currentTime++;
+        h.current.player.video.readyState = 4;
+        h.advance(600);
+        h.advance(9000);
+        assert.equal(h.reloads.length, 2);
+        h.context.doTwitchPlayerTask.recovery.cancel();
+    });
+
+    test(file + ' excludes paused, seeking, ended, VOD and moving playback from ad stall recovery', () => {
+        for (const reason of ['pause', 'wrapper-pause', 'intent', 'seek', 'ended', 'vod', 'progress', 'outside-ad', 'replacement', 'channel', 'startup']) {
+            const h = monitorHarness(file, reason !== 'startup');
+            h.context.playerBufferState.inAdBreak = reason !== 'outside-ad';
+            if (reason === 'pause') h.current.player.video.paused = true;
+            if (reason === 'wrapper-pause') h.current.player.isPaused = () => true;
+            if (reason === 'intent') h.context.playerBufferState.userPauseIntent = true;
+            if (reason === 'seek') h.current.player.video.seeking = true;
+            if (reason === 'ended') h.current.player.video.ended = true;
+            if (reason === 'vod') h.current.state.props.content.type = 'video';
+            if (reason === 'replacement') h.current.player.video = { ...h.current.player.video };
+            if (reason === 'replacement') h.current.player.getHTMLVideoElement = () => h.current.player.video;
+            if (reason === 'channel') h.window.location.href = 'https://www.twitch.tv/other';
+            for (let tick = 0; tick < 40; tick++) {
+                if (reason === 'progress') h.current.player.video.currentTime += 0.5;
+                h.advance(600);
+            }
+            assert.equal(h.reloads.length, 0, reason);
+        }
+    });
+
     test(file + ' keeps early reload budgets on sticky and backup-search paths', async () => {
         for (const sticky of [false, true]) {
             for (const [cacheSize, threshold, expected] of [[0, 3, 2], [3, 3, 1], [0, 0, 0]]) {

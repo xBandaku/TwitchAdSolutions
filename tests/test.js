@@ -511,6 +511,7 @@ function playbackContext(source) {
     context.getPlayerAndState = () => context.playerAndState;
     if (source.includes('function getPlaybackChannelName(')) {
         vm.runInContext(scriptFunction(source, 'getPlaybackChannelName'), context);
+        vm.runInContext(scriptFunction(source, 'doTwitchPlayerTask'), context);
     }
     return context;
 }

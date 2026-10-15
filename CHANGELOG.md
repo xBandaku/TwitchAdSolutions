@@ -1,3 +1,20 @@
+## v68.5.26 (2026-10-15)
+
+### Fixed
+
+- Recover an ad backup whose playhead stops even when no ad segments are being stripped and only one buffered range remains. Require observed playback, wait eight seconds after existing reload/switch grace periods, and request a hard player reset with a fresh token.
+- Limit the new detector to one recovery request per frozen run. Re-arm after playback resumes beyond reload grace, and respect pauses, seeks, stream changes and startup.
+
+### Tests
+
+- Add regression coverage for frozen backup playback, grace periods, retry limits and native-media recovery in the browser.
+- Local validation passed 255 runtime assertions, 112 Node tests and 130 browser tests. Windows WebKit skipped 20 native-media cases; the release workflow runs the full suite on Linux.
+
+### Distribution
+
+- Vaft 68.5.26 (internal version 112), with matching userscript and uBlock recovery logic.
+- Includes the userscript, uBlock resource, seven-script ZIP bundle and SHA256SUMS.
+
 ## v68.5.25 (2026-10-15)
 
 ### Fixed

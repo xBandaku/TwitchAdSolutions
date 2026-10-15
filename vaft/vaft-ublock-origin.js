@@ -37,7 +37,7 @@ twitch-videoad.js text/javascript
         }
     }
     'use strict';
-    const ourTwitchAdSolutionsVersion = 111;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 112;// Used to prevent conflicts with outdated versions of the scripts
     console.log('[AD DEBUG] TwitchAdSolutions vaft v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
         console.log('[AD DEBUG] CONFLICT: vaft v' + ourTwitchAdSolutionsVersion + ' skipped — another script already active (v' + window.twitchAdSolutionsVersion + '). Remove duplicate scripts.');
@@ -2026,6 +2026,7 @@ twitch-videoad.js text/javascript
         weJustPaused: 0,
         inAdBreak: false,
         vaftEverUnmuted: false,
+        adPlaybackWatch: null,
         gapJumpLastPosition: -1,
         gapJumpStuckTicks: 0
     };
@@ -2307,6 +2308,49 @@ twitch-videoad.js text/javascript
                         }
                     }
                 } catch {}
+            }
+        }
+        // A backup can stop advancing with one buffered range and no stripped segments.
+        {
+            const monitored = playerForMonitoringBuffering;
+            const video = monitored?.player?.getHTMLVideoElement?.();
+            if (!video || monitored.state?.props?.content?.type !== 'live') {
+                playerBufferState.adPlaybackWatch = null;
+            } else {
+                const channelName = getPlaybackChannelName(monitored);
+                let watch = playerBufferState.adPlaybackWatch;
+                if (!watch || watch.video !== video || watch.channelName !== channelName) {
+                    watch = playerBufferState.adPlaybackWatch = {
+                        video, channelName, position: video.currentTime,
+                        hasPlayed: false, stalledAt: 0, reloadUsed: false
+                    };
+                }
+                const now = Date.now();
+                const recentReload = playerBufferState.lastReloadAt && now - playerBufferState.lastReloadAt < 15000;
+                const recentSwitch = playerBufferState.lastBackupSwitchAt && now - playerBufferState.lastBackupSwitchAt < 10000;
+                const advanced = video.currentTime > watch.position + 0.05;
+                const reset = video.seeking || video.currentTime < watch.position;
+                if (reset) watch.hasPlayed = false;
+                else if (advanced) {
+                    watch.hasPlayed = true;
+                    if (!recentReload && !doTwitchPlayerTask.recovery) watch.reloadUsed = false;
+                }
+                if (advanced || reset || !watch.hasPlayed || !playerBufferState.inAdBreak
+                    || video.paused || video.ended || monitored.player.isPaused()
+                    || playerBufferState.userPauseIntent || recentReload || recentSwitch) {
+                    watch.stalledAt = 0;
+                } else if (!watch.reloadUsed) {
+                    if (!watch.stalledAt) watch.stalledAt = now;
+                    else if (now - watch.stalledAt >= 8000) {
+                        console.log('[AD DEBUG] Ad backup playhead frozen for ' + ((now - watch.stalledAt) / 1000).toFixed(1)
+                            + 's (readyState=' + video.readyState + ', networkState=' + video.networkState
+                            + ', bufferedRanges=' + video.buffered.length + ', stripping=' + isActivelyStrippingAds + ') - hard reload');
+                        watch.reloadUsed = true;
+                        watch.stalledAt = 0;
+                        doTwitchPlayerTask(false, true, 'early');
+                    }
+                }
+                watch.position = video.currentTime;
             }
         }
         // Loading-circle health check: during an ad strip+recovery loop the normal buffer monitor
