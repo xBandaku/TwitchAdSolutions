@@ -73,6 +73,51 @@ function recoveryHarness(file) {
 }
 
 for (const file of files) {
+    test(file + ' upgrades a shared soft recovery before accepting playback progress', async () => {
+        const h = recoveryHarness(file);
+        const pending = h.context.doTwitchPlayerTask(false, true, 'post-ad');
+        h.advance(150);
+        h.current.player.video.currentTime++;
+        assert.equal(h.context.doTwitchPlayerTask(false, true, 'early'), pending);
+        h.advance(150);
+        assert.equal(h.reloads.length, 2);
+        assert.equal(h.reloads[0].refreshAccessToken, false);
+        assert.equal(h.reloads[1].isNewMediaPlayerInstance, true);
+        assert.equal(h.reloads[1].refreshAccessToken, true);
+        h.advance(150);
+        h.current.player.video.currentTime++;
+        h.advance(150);
+        assert.equal(await pending, true);
+    });
+
+    test(file + ' permits only one late upgrade after two soft attempts', async () => {
+        const h = recoveryHarness(file);
+        const pending = h.context.doTwitchPlayerTask(false, true, 'post-ad');
+        h.advance(6000);
+        assert.equal(h.reloads.length, 2);
+        for (let request = 0; request < 5; request++) {
+            assert.equal(h.context.doTwitchPlayerTask(false, true, 'early'), pending);
+        }
+        h.advance(150);
+        assert.equal(h.reloads.length, 3);
+        assert.equal(h.reloads[2].isNewMediaPlayerInstance, true);
+        h.advance(13000);
+        assert.equal(await pending, false);
+        assert.equal(h.reloads.length, 3);
+    });
+
+    test(file + ' keeps iOS token refresh separate when upgrading recovery', async () => {
+        const h = recoveryHarness(file);
+        h.context.iosSoftReload = true;
+        const pending = h.context.doTwitchPlayerTask(false, true, 'post-ad');
+        h.context.doTwitchPlayerTask(false, true, 'early');
+        h.advance(150);
+        assert.equal(h.reloads[1].isNewMediaPlayerInstance, false);
+        assert.equal(h.reloads[1].refreshAccessToken, true);
+        h.context.doTwitchPlayerTask.recovery.cancel();
+        assert.equal(await pending, false);
+    });
+
     test(file + ' rolls back its pre-mute after a failed reload', async () => {
         const h = recoveryHarness(file);
         h.current.player.video.muted = false;

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TwitchAdSolutions (vaft-testing)
 // @namespace    https://github.com/ryanbr/TwitchAdSolutions
-// @version      690.0.0
+// @version      691.0.0
 // @description  Multiple solutions for blocking Twitch ads (vaft testing variant)
 // @updateURL    https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft_testing.user.js
 // @downloadURL  https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft_testing.user.js
@@ -48,7 +48,7 @@
         }
     }
     'use strict';
-    const ourTwitchAdSolutionsVersion = 690;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 691;// Used to prevent conflicts with outdated versions of the scripts
     console.log('[AD DEBUG] TwitchAdSolutions vaft-testing v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
         console.log('[AD DEBUG] CONFLICT: vaft-testing v' + ourTwitchAdSolutionsVersion + ' skipped — another script already active (v' + window.twitchAdSolutionsVersion + '). Remove duplicate scripts.');
@@ -2719,7 +2719,10 @@
     function doTwitchPlayerTask(isPausePlay, isReload, reloadKind) {
         const active = doTwitchPlayerTask.recovery;
         if (active) {
-            if (active.isCurrent()) return active.promise;
+            if (active.isCurrent()) {
+                if (isReload && reloadKind === 'early') active.upgrade();
+                return active.promise;
+            }
             active.cancel();
         }
         const playerAndState = getPlayerAndState();
@@ -2810,10 +2813,19 @@
             const route = window.location.href;
             const request = { promise: null, cancelled: false };
             let resolveRecovery, pollTimer, cleanupMute = () => {};
-            let attempt = 0, deadline = 0, observedVideo = null, initialTime = 0, playedVideo = null;
+            let attempt = 0, maxAttempts = 2, needsUpgrade = false;
+            let deadline = 0, observedVideo = null, initialTime = 0, playedVideo = null;
             let settingsAfterReload, preMutedVideo = null;
-            const hardReload = reloadKind === 'early' && !iosSoftReload;
-            const refreshToken = reloadKind === 'early';
+            let hardReload = reloadKind === 'early' && !iosSoftReload;
+            let refreshToken = reloadKind === 'early';
+            request.upgrade = () => {
+                if (refreshToken) return;
+                refreshToken = true;
+                hardReload = !iosSoftReload;
+                needsUpgrade = true;
+                // A late upgrade still gets one hard attempt after both soft attempts started.
+                maxAttempts = Math.max(2, attempt + 1);
+            };
             const isCurrent = () => {
                 const current = getPlayerAndState();
                 return doTwitchPlayerTask.latestRecovery === request && !request.cancelled
@@ -2864,6 +2876,11 @@
             };
             const poll = () => {
                 if (!isCurrent() || document.pictureInPictureElement) { finish(false); return; }
+                if (needsUpgrade) {
+                    needsUpgrade = false;
+                    reload();
+                    return;
+                }
                 const current = getPlayerAndState();
                 const video = current?.player?.getHTMLVideoElement?.();
                 if (video && !video.ended && video.readyState >= 2) {
@@ -2883,8 +2900,8 @@
                     if (!video.paused && video.currentTime > initialTime + 0.1) { finish(true); return; }
                 }
                 if (Date.now() >= deadline) {
-                    if (attempt >= 2) {
-                        console.log('[AD DEBUG] Player recovery stopped after two attempts');
+                    if (attempt >= maxAttempts) {
+                        console.log('[AD DEBUG] Player recovery stopped after ' + attempt + ' attempts');
                         finish(false);
                         return;
                     }
@@ -2909,7 +2926,8 @@
                 playerBufferState.adStallStartAt = 0;
                 playerBufferState.weJustPaused = Date.now();
                 playerForMonitoringBuffering = null;
-                console.log('[AD DEBUG] Reloading Twitch player (' + (hardReload ? 'hard' : 'soft') + ', attempt ' + attempt + '/2)');
+                console.log('[AD DEBUG] Reloading Twitch player (' + (hardReload ? 'hard' : 'soft') + ', attempt ' + attempt + '/' + maxAttempts + ')');
+                prepareMute();
                 try {
                     current.state.setSrc({ isNewMediaPlayerInstance: hardReload, refreshAccessToken: refreshToken });
                 } catch (error) {
@@ -2933,10 +2951,12 @@
                 preserveSettings = false;
                 console.log('[AD DEBUG] Could not preserve player settings: ' + error.message);
             }
-            if (hardReload) {
-                const video = player.getHTMLVideoElement?.();
+            const prepareMute = () => {
+                if (!hardReload) return;
+                const video = getPlayerAndState()?.player?.getHTMLVideoElement?.();
                 const shouldRecover = playerBufferState.vaftEverUnmuted && RecoverFromSilentMute;
-                if (video && (!video.muted || shouldRecover) && !snapshot.get('video-muted')?.includes('"default":true')) {
+                if (video && (!video.muted || shouldRecover) && !snapshot.get('video-muted')?.includes('"default":true') && !muteWasChanged()) {
+                    cleanupMute();
                     if (!video.muted) preMutedVideo = video;
                     video.muted = true;
                     const listener = event => {
@@ -2952,7 +2972,7 @@
                     setTimeout(() => { restoreMute(); cleanupMute(); }, 4000);
                     setTimeout(restoreMute, 5500);
                 }
-            }
+            };
             reload();
             setTimeout(() => {
                 if (!isCurrent()) return;

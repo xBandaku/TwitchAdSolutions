@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Upgrade an active soft recovery when a hard reload is requested. Keep a shared promise and bounded retries, with one final upgrade attempt allowed if both soft attempts already started.
+
 - Restore a temporary pre-mute when a reload fails or recovery is cancelled, while preserving user mute changes and leaving replacement videos alone.
 
 ## v68.5.19 (2026-10-15)
