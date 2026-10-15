@@ -22,6 +22,36 @@ function harness(file, bindings = {}) {
 }
 
 for (const file of files) {
+    test(file + ' processes query, v2 and relative media URLs from master playlists', async () => {
+        for (const uri of ['https://fixture.invalid/index.m3u8?token=fixture', 'https://fixture.invalid/v1/chunked/stream', '../fixture/chunked?token=fixture']) {
+            const masterUrl = 'https://usher.ttvnw.net/api/v2/channel/hls/fixture.m3u8?token=fixture';
+            const mediaUrl = new URL(uri, masterUrl).href;
+            const master = '#EXTM3U\r\n#EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=1920x1080,FRAME-RATE=60,CODECS="avc1.4d4028"\r\n' + uri + '\r\n';
+            const calls = [], processed = [];
+            const { context } = harness(file, { fetch: async (input, options) => {
+                const url = input instanceof Request ? input.url : String(input);
+                calls.push({ input, options });
+                return new Response(url === masterUrl ? master : clean);
+            } });
+            context.processM3U8 = async (url, text) => { processed.push(url); return text + '#fixture-processed\n'; };
+            context.hookWorkerFetch();
+            await context.fetch(masterUrl);
+            assert.equal(context.StreamInfos.fixture.ResolutionList.length, 1);
+            assert.equal(context.StreamInfos.fixture.ResolutionList[0].Url, mediaUrl);
+            const controller = new AbortController();
+            const request = new Request(mediaUrl, { headers: { 'X-Fixture': 'preserved' }, signal: controller.signal });
+            assert.match(await (await context.fetch(request)).text(), /#fixture-processed/);
+            assert.equal(calls.at(-1).input.headers.get('X-Fixture'), 'preserved');
+            controller.abort();
+            assert.equal(calls.at(-1).input.signal.aborted, true);
+            await context.fetch(new URL(mediaUrl));
+            await context.fetch(masterUrl);
+            assert.equal(context.StreamInfos.fixture.ResolutionList.length, 1);
+            assert.deepEqual(processed, [mediaUrl, mediaUrl]);
+            assert.ok(calls.every(call => call.input !== undefined));
+        }
+    });
+
     test(file + ' rejects media and master playlist failures', async () => {
         for (const url of ['https://fixture.invalid/live.m3u8', 'https://usher.ttvnw.net/api/channel/hls/fixture.m3u8?token=fixture']) {
             const bodyError = new Error('fixture body failed');
