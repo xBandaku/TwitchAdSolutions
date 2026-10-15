@@ -1,0 +1,46 @@
+name: Browser tests
+
+on:
+  push:
+    paths: ['**/*.js', 'package*.json', '.github/workflows/**']
+  pull_request:
+    paths: ['**/*.js', 'package*.json', '.github/workflows/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: browsers-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser:
+    name: ${{ matrix.browser }} fixtures
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-node@v7
+      with:
+        node-version: '24'
+        cache: npm
+    - run: npm ci --ignore-scripts
+    - name: Install browser and system dependencies
+      run: npx playwright install --with-deps ${{ matrix.browser }}
+    - name: Run offline Twitch fixtures
+      run: npm run test:browser -- --project=${{ matrix.browser }}
+    - name: Upload browser reports and failure traces
+      if: ${{ !cancelled() }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: browser-results-${{ matrix.browser }}
+        path: |
+          playwright-report/
+          test-results/
+        if-no-files-found: error
+        retention-days: 7
