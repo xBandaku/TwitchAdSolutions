@@ -37,7 +37,7 @@ twitch-videoad.js text/javascript
         }
     }
     'use strict';
-    const ourTwitchAdSolutionsVersion = 99;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 100;// Used to prevent conflicts with outdated versions of the scripts
     console.log('[AD DEBUG] TwitchAdSolutions vaft v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
         console.log('[AD DEBUG] CONFLICT: vaft v' + ourTwitchAdSolutionsVersion + ' skipped — another script already active (v' + window.twitchAdSolutionsVersion + '). Remove duplicate scripts.');
@@ -63,6 +63,9 @@ twitch-videoad.js text/javascript
         scope.TwitchAdUrlRewriteRegex = /(X-TV-TWITCH-AD(?:-[A-Z]+)*-URLS?=")[^"]*(")/g;
         scope.UriAttributeRegex = /URI="([^"]+)"/;
         scope.ClientID = 'kimne78kx3ncx6brgo4mv6wki5h1ko';
+        scope.BackupRequestTimeout = 4000;
+        scope.BackupSearchTimeout = 8000;
+        scope.BackupRetryDelay = 3000;
         scope.BackupPlayerTypes = [
             // Order matters: first clean type wins. 'embed' moved to end — field-observed
             // Twitch returns GQL 'server error' for streamPlaybackAccessToken on embed when
@@ -163,6 +166,7 @@ twitch-videoad.js text/javascript
             TotalAllStrippedPolls: 0,
             LastCleanNativeM3U8: null,
             LastCleanNativePlaylistAt: 0,
+            BackupRetryAt: 0,
             BackupEncodingsM3U8Cache: [],
             ActiveBackupPlayerType: null,
             PinnedBackupPlayerType: null,
@@ -331,6 +335,7 @@ twitch-videoad.js text/javascript
                     ${processM3U8.toString()}
                     ${hookWorkerFetch.toString()}
                     ${declareOptions.toString()}
+                    ${fetchPlaylist.toString()}
                     ${getAccessToken.toString()}
                     ${gqlRequest.toString()}
                     ${parseAttributes.toString()}
@@ -577,7 +582,7 @@ twitch-videoad.js text/javascript
                                 const encodingsM3u8 = masterLines.join('\n');
                                 const serverTime = getServerTimeFromM3u8(encodingsM3u8);
                                 let streamInfo = StreamInfos[channelName];
-                                if (streamInfo != null && streamInfo.EncodingsM3U8 != null && (streamInfo.ResolutionList.length === 0 || (await realFetch(streamInfo.ResolutionList[0].Url)).status !== 200)) {
+                                if (streamInfo != null && streamInfo.EncodingsM3U8 != null && (streamInfo.ResolutionList.length === 0 || !(await fetchPlaylist(streamInfo.ResolutionList[0].Url, realFetch, BackupRequestTimeout, true)))) {
                                     // The cached encodings are dead (the stream probably restarted)
                                     streamInfo = null;
                                 }
@@ -694,6 +699,23 @@ twitch-videoad.js text/javascript
             }
             return realFetch.apply(this, arguments);
         };
+    }
+    async function fetchPlaylist(url, realFetch, timeout = BackupRequestTimeout, media = false) {
+        if (!url || timeout <= 0) return null;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeout);
+        try {
+            const response = await realFetch(url, { signal: controller.signal });
+            if (response.status !== 200) return null;
+            const text = await response.text();
+            if (!text.trimStart().startsWith('#EXTM3U') || (media && !text.includes('#EXTINF:'))) return null;
+            return text.split(/\r?\n/).map(line => line.trim() && !line.startsWith('#') ? new URL(line.trim(), url).href : line).join('\n');
+        } catch (error) {
+            console.log('[AD DEBUG] Backup playlist fetch failed: ' + error.message);
+            return null;
+        } finally {
+            clearTimeout(timer);
+        }
     }
     function getServerTimeFromM3u8(encodingsM3u8) {
         if (V2API) {
@@ -1298,6 +1320,7 @@ twitch-videoad.js text/javascript
                 return textStr;
             }
             const backupSearchStart = Date.now();
+            const backupSearchDeadline = backupSearchStart + BackupSearchTimeout;
             let backupColdTokenFetches = 0;// diag: cold-cache token round-trips this backup search (0 = warm — encodings cache hit)
             let backupPlayerType = null;
             let backupM3u8 = null;
@@ -1365,7 +1388,7 @@ twitch-videoad.js text/javascript
                     }
                 }
             }
-            for (let playerTypeIndex = startIndex; !backupM3u8 && playerTypeIndex < playerTypesToTry.length; playerTypeIndex++) {
+            for (let playerTypeIndex = startIndex; !backupM3u8 && playerTypeIndex < playerTypesToTry.length && Date.now() < backupSearchDeadline && Date.now() >= streamInfo.BackupRetryAt; playerTypeIndex++) {
                 const playerType = playerTypesToTry[playerTypeIndex];
                 const realPlayerType = playerType.replace('-CACHED', '');
                 const failedAt = streamInfo.FailedBackupPlayerTypes.get(realPlayerType);
@@ -1377,7 +1400,7 @@ twitch-videoad.js text/javascript
                     continue;
                 }
                 const isFullyCachedPlayerType = playerType != realPlayerType;
-                for (let i = 0; i < 2; i++) {
+                for (let i = 0; i < 2 && Date.now() < backupSearchDeadline; i++) {
                     // This caches the m3u8 if it doesn't have ads. If the already existing cache has ads it fetches a new version (second loop)
                     let isFreshM3u8 = false;
                     let encodingsM3u8 = streamInfo.BackupEncodingsM3U8Cache[playerType];
@@ -1385,7 +1408,7 @@ twitch-videoad.js text/javascript
                         isFreshM3u8 = true;
                         backupColdTokenFetches++;
                         try {
-                            const accessTokenResponse = await getAccessToken(streamInfo.ChannelName, realPlayerType);
+                            const accessTokenResponse = await getAccessToken(streamInfo.ChannelName, realPlayerType, Math.min(BackupRequestTimeout, backupSearchDeadline - Date.now()));
                             if (accessTokenResponse.status === 200) {
                                 const accessToken = await accessTokenResponse.json();
                                 // Twitch returns streamPlaybackAccessToken in two observed shapes:
@@ -1407,14 +1430,14 @@ twitch-videoad.js text/javascript
                                 const urlInfo = new URL('https://usher.ttvnw.net/api/' + (V2API ? 'v2/' : '') + 'channel/hls/' + streamInfo.ChannelName + '.m3u8' + streamInfo.UsherParams);
                                 urlInfo.searchParams.set('sig', spat.signature);
                                 urlInfo.searchParams.set('token', spat.value);
-                                const encodingsM3u8Response = await realFetch(urlInfo.href);
-                                if (encodingsM3u8Response.status === 200) {
-                                    encodingsM3u8 = streamInfo.BackupEncodingsM3U8Cache[playerType] = await encodingsM3u8Response.text();
+                                const encodingsM3u8Response = await fetchPlaylist(urlInfo.href, realFetch, Math.min(BackupRequestTimeout, backupSearchDeadline - Date.now()));
+                                if (encodingsM3u8Response) {
+                                    encodingsM3u8 = streamInfo.BackupEncodingsM3U8Cache[playerType] = encodingsM3u8Response;
                                     // Reset detection diagnostic counter on success — token fetched, m3u8 fetched.
                                     streamInfo.ConsecutiveTokenFetchFailures = 0;
                                     streamInfo.LoggedTokenFailureStreak = false;
                                 } else {
-                                    console.log('[AD DEBUG] Usher HTTP ' + encodingsM3u8Response.status + ' for ' + realPlayerType);
+                                    console.log('[AD DEBUG] No valid backup master playlist for ' + realPlayerType);
                                 }
                             } else {
                                 let errorBody = '';
@@ -1440,9 +1463,9 @@ twitch-videoad.js text/javascript
                     if (encodingsM3u8) {
                         try {
                             const streamM3u8Url = getStreamUrlForResolution(encodingsM3u8, currentResolution);
-                            const streamM3u8Response = await realFetch(streamM3u8Url);
-                            if (streamM3u8Response.status == 200) {
-                                const m3u8Text = await streamM3u8Response.text();
+                            const streamM3u8Response = await fetchPlaylist(streamM3u8Url, realFetch, Math.min(BackupRequestTimeout, backupSearchDeadline - Date.now()), true);
+                            if (streamM3u8Response) {
+                                const m3u8Text = streamM3u8Response;
                                 if (m3u8Text) {
                                     if (playerType == FallbackPlayerType) {
                                         fallbackM3u8 = m3u8Text;
@@ -1491,7 +1514,7 @@ twitch-videoad.js text/javascript
                                     }
                                 }
                             } else {
-                                console.log('[AD DEBUG] Backup stream fetch failed for ' + playerType + ' (status ' + streamM3u8Response.status + ')');
+                                console.log('[AD DEBUG] No valid backup media playlist for ' + playerType);
                             }
                         } catch (err) {
                             console.log('[AD DEBUG] Backup stream error for ' + playerType + ': ' + err.message);
@@ -1525,6 +1548,9 @@ twitch-videoad.js text/javascript
             // would overwrite the cleared state and feed stale playlist data to the player,
             // causing buffer reconciliation failures and a forced reload. Check IsShowingAd
             // here to discard stale results.
+            if (Date.now() >= streamInfo.BackupRetryAt) {
+                streamInfo.BackupRetryAt = backupM3u8 ? 0 : Date.now() + BackupRetryDelay;
+            }
             if (backupM3u8 && streamInfo.IsShowingAd) {
                 textStr = backupM3u8;
                 streamInfo.LastCommittedBackupPlayerType = backupPlayerType;
@@ -1670,6 +1696,7 @@ twitch-videoad.js text/javascript
                 streamInfo.RequestedAds?.clear?.();
                 streamInfo.SpoofedAdIds?.clear?.();// New break = fresh ad-spoof dedup set
                 streamInfo.FailedBackupPlayerTypes?.clear?.();
+                streamInfo.BackupRetryAt = 0;
                 if (streamInfo.LoggedBackupAdsByType) streamInfo.LoggedBackupAdsByType.clear();
                 streamInfo.LoggedContamReorderThisBreak = false;
                 streamInfo.CleanPlaylistCount = 0;
@@ -1784,7 +1811,7 @@ twitch-videoad.js text/javascript
             }));
     }
     // Request a playback access token from Twitch GQL using the given player type
-    function getAccessToken(channelName, playerType) {
+    function getAccessToken(channelName, playerType, timeout) {
         const body = {
             operationName: 'PlaybackAccessToken',
             variables: {
@@ -1802,10 +1829,10 @@ twitch-videoad.js text/javascript
                 }
             }
         };
-        return gqlRequest(body);
+        return gqlRequest(body, timeout);
     }
     // Send a GQL request to Twitch via the main thread (workers can't make credentialed requests)
-    function gqlRequest(body) {
+    function gqlRequest(body, timeout) {
         if (!GQLDeviceID) {
             GQLDeviceID = '';
             const dcharacters = 'abcdefghijklmnopqrstuvwxyz0123456789';
@@ -1826,6 +1853,7 @@ twitch-videoad.js text/javascript
             const requestId = Math.random().toString(36).substring(2, 15);
             const fetchRequest = {
                 id: requestId,
+                timeout,
                 url: 'https://gql.twitch.tv/gql',
                 options: {
                     method: 'POST',
@@ -1838,7 +1866,7 @@ twitch-videoad.js text/javascript
                     pendingFetchRequests.delete(requestId);
                     reject(new Error('FetchRequest timed out'));
                 }
-            }, 15000);
+            }, timeout ?? 15000);
             pendingFetchRequests.set(requestId, {
                 resolve,
                 reject,
@@ -2737,7 +2765,7 @@ twitch-videoad.js text/javascript
         // 5s AbortController timeout — bounds worst-case wait when Twitch GQL hangs.
         // AbortError flows through the existing catch + FailedBackupPlayerTypes lockout.
         const controller = new AbortController();
-        const timeoutMs = 5000;
+        const timeoutMs = fetchRequest.timeout ?? 5000;
         const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
         try {
             const response = await window.realFetch(fetchRequest.url, {
