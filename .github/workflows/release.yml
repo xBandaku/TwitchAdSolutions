@@ -19,6 +19,7 @@ jobs:
   create-release:
     name: Create Release
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
     - name: Checkout code
@@ -30,22 +31,20 @@ jobs:
       with:
         node-version: '24'
 
-    - name: Install acorn
-      run: npm install -g acorn@8.19.0
-
-    - name: Validate JavaScript
-      shell: bash
-      run: |
-        git ls-files -z '*.js' | while IFS= read -r -d '' script; do
-          echo "Validating $script"
-          case "$script" in
-            *ublock-origin*.js) tail -n +2 "$script" | acorn --ecma2022 > /dev/null ;;
-            *) acorn --ecma2022 "$script" > /dev/null ;;
-          esac
-        done
+    - name: Install test dependencies
+      run: npm ci --ignore-scripts
 
     - name: Run unit tests
-      run: node tests/test.js
+      run: npm test
+
+    - name: Install browser dependencies
+      run: npx playwright install --with-deps
+
+    - name: Run browser recovery and worker tests
+      run: npm run test:browser
+
+    - name: Package installable scripts and checksums
+      run: npm run test:package
 
     - name: Prepare release notes
       id: release
@@ -69,6 +68,51 @@ jobs:
         console.log('Prepared release notes for vaft ' + version);
         NODE
 
+    - name: Build and verify release bundle
+      env:
+        VERSION: ${{ steps.release.outputs.version }}
+        RELEASE_DIR: release-artifact
+      run: |
+        python <<'PY'
+        import hashlib
+        import os
+        import re
+        import zipfile
+        from pathlib import Path
+
+        version = os.environ['VERSION']
+        if not re.fullmatch(r'\d+\.\d+\.\d+', version):
+            raise ValueError('Expected a stable release version')
+        root = Path(os.environ['RELEASE_DIR']).resolve()
+        manifest = (root / 'SHA256SUMS').read_bytes()
+        entries = {}
+        for line in manifest.decode('utf-8').splitlines():
+            digest, name = line.split('  ', 1)
+            source = (root / name).resolve()
+            source.relative_to(root)
+            payload = source.read_bytes()
+            if hashlib.sha256(payload).hexdigest() != digest:
+                raise ValueError('Checksum mismatch: ' + name)
+            if name in entries:
+                raise ValueError('Duplicate bundle entry: ' + name)
+            entries[name] = payload
+        if not entries:
+            raise ValueError('Release manifest is empty')
+        entries['SHA256SUMS'] = manifest
+        archive = root / ('TwitchAdSolutions-v' + version + '.zip')
+        with zipfile.ZipFile(archive, 'w') as bundle:
+            for name, payload in entries.items():
+                entry = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+                entry.compress_type = zipfile.ZIP_DEFLATED
+                entry.external_attr = 0o100644 << 16
+                bundle.writestr(entry, payload)
+        with zipfile.ZipFile(archive) as bundle:
+            for name, payload in entries.items():
+                if bundle.read(name) != payload:
+                    raise ValueError('Bundle verification failed: ' + name)
+        print('Verified ' + str(len(entries)) + ' release bundle entries')
+        PY
+
     - name: Summarize dry run
       if: ${{ inputs.dry_run }}
       env:
@@ -77,10 +121,19 @@ jobs:
         {
           echo "Dry run for v$VERSION. No tag or release was created."
           echo
-          echo 'Asset: vaft/vaft.user.js'
+          echo 'Assets: vaft.user.js, vaft-ublock-origin.js, script bundle, SHA256SUMS'
           echo
           cat "$RUNNER_TEMP/release-notes.md"
         } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Upload release preview
+      if: ${{ inputs.dry_run }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: release-preview-${{ steps.release.outputs.version }}
+        path: release-artifact/
+        if-no-files-found: error
+        retention-days: 7
 
     - name: Check publish target
       if: ${{ !inputs.dry_run }}
@@ -104,7 +157,11 @@ jobs:
         target_commitish: ${{ github.sha }}
         name: Release v${{ steps.release.outputs.version }}
         body_path: ${{ runner.temp }}/release-notes.md
-        files: vaft/vaft.user.js
+        files: |
+          release-artifact/vaft/vaft.user.js
+          release-artifact/vaft/vaft-ublock-origin.js
+          release-artifact/TwitchAdSolutions-v${{ steps.release.outputs.version }}.zip
+          release-artifact/SHA256SUMS
         fail_on_unmatched_files: true
         overwrite_files: false
         make_latest: true

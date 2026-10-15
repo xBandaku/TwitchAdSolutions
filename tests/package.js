@@ -7,7 +7,7 @@ const { root, scripts } = require('./scripts');
 const output = path.resolve(process.argv[2] || 'release-artifact');
 const checksums = [];
 for (const { file } of scripts) {
-    const source = fs.readFileSync(path.join(root, file));
+    const source = Buffer.from(fs.readFileSync(path.join(root, file), 'utf8').replace(/\r\n/g, '\n'));
     const target = path.join(output, file);
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, source);

@@ -117,7 +117,7 @@ See the [solution list](full-list.md) for proxies, alternate players, and other 
 
 ## Development checks
 
-Use Node.js 22 or 24. Install the locked test dependencies, then run the checks:
+Use Node.js 22 or 24 and Python 3. Install the locked test dependencies, then run the checks:
 
 ```sh
 npm ci --ignore-scripts

@@ -9,6 +9,7 @@ const { test, after } = require('node:test');
 const workflow = fs.readFileSync(path.join(__dirname, '..', '.github/workflows/release.yml'), 'utf8').replace(/\r\n/g, '\n');
 const prepare = workflow.match(/        node <<'NODE'\n([\s\S]*?)\n        NODE/)[1].replace(/^        /gm, '');
 const gate = workflow.slice(workflow.indexOf('    - name: Check publish target'), workflow.indexOf('    - name: Publish release')).split('      run: |\n')[1].replace(/^        /gm, '');
+const buildArchive = workflow.match(/        python <<'PY'\n([\s\S]*?)\n        PY/)[1].replace(/^        /gm, '');
 
 function releaseNotes(version, changelog) {
     const writes = new Map();
@@ -86,9 +87,51 @@ test('publishing requires an explicit opt-in after unit tests', () => {
     const unitTests = workflow.indexOf('    - name: Run unit tests');
     assert.ok(unitTests >= 0 && unitTests < workflow.indexOf('    - name: Check publish target'));
     assert.match(workflow, /target_commitish: \$\{\{ github\.sha \}\}/);
-    assert.match(workflow, /files: vaft\/vaft\.user\.js/);
+    assert.match(workflow, /release-artifact\/vaft\/vaft\.user\.js/);
+    assert.match(workflow, /release-artifact\/vaft\/vaft-ublock-origin\.js/);
+    assert.match(workflow, /release-artifact\/TwitchAdSolutions-v\$\{\{ steps\.release\.outputs\.version \}\}\.zip/);
+    assert.match(workflow, /release-artifact\/SHA256SUMS/);
     assert.match(workflow, /fail_on_unmatched_files: true/);
     assert.doesNotMatch(workflow, /git (?:commit|push|tag) /);
+});
+
+test('publishing runs locked dependencies, the full Node suite, browsers and packaging first', () => {
+    const commands = ['npm ci --ignore-scripts', 'npm test', 'npx playwright install --with-deps', 'npm run test:browser', 'npm run test:package'];
+    const publish = workflow.indexOf('    - name: Check publish target');
+    let previous = 0;
+    for (const command of commands) {
+        const index = workflow.indexOf('run: ' + command);
+        assert.ok(index > previous && index < publish, command);
+        previous = index;
+    }
+    assert.doesNotMatch(workflow, /npm install -g/);
+    assert.match(workflow, /if: \$\{\{ inputs\.dry_run \}\}\n\s+uses: actions\/upload-artifact/);
+});
+
+test('release packaging normalizes line endings and verifies a repeatable bundle', () => {
+    const { createHash } = require('node:crypto');
+    const { scripts, root } = require('./scripts');
+    const output = path.join(repository, 'package');
+    execFileSync(process.execPath, [path.join(__dirname, 'package.js'), output], { stdio: 'pipe' });
+    const manifest = fs.readFileSync(path.join(output, 'SHA256SUMS'), 'utf8');
+    for (const { file } of scripts) {
+        const expected = Buffer.from(fs.readFileSync(path.join(root, file), 'utf8').replace(/\r\n/g, '\n'));
+        const actual = fs.readFileSync(path.join(output, file));
+        assert.deepEqual(actual, expected, file);
+        assert.ok(manifest.includes(createHash('sha256').update(actual).digest('hex') + '  ' + file));
+    }
+    const build = () => execFileSync('python', ['-c', buildArchive], {
+        env: { ...process.env, VERSION: '1.2.4', RELEASE_DIR: output }, stdio: 'pipe'
+    });
+    build();
+    const archive = path.join(output, 'TwitchAdSolutions-v1.2.4.zip');
+    const first = fs.readFileSync(archive);
+    build();
+    assert.deepEqual(fs.readFileSync(archive), first);
+    const entries = JSON.parse(execFileSync('python', ['-c', 'import json,sys,zipfile; print(json.dumps(zipfile.ZipFile(sys.argv[1]).namelist()))', archive], { encoding: 'utf8' }));
+    assert.deepEqual(entries, [...scripts.map(script => script.file), 'SHA256SUMS']);
+    fs.appendFileSync(path.join(output, scripts[0].file), '\n// tampered fixture\n');
+    assert.throws(build, /Checksum mismatch/);
 });
 
 test('the current checkout prepares nonempty notes for its userscript version', () => {
