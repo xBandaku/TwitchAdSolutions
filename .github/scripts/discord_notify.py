@@ -104,8 +104,38 @@ elif EVENT == "release":
         fields.append(field("Pre-release", "Yes"))
     actor_avatar = (release.get("author") or {}).get("avatar_url") or actor_avatar
 else:
-    print(f"No handler for {EVENT}; skipping.")
-    sys.exit(0)
+    icons = {
+        "create": "🌱", "delete": "🗑️", "issue_comment": "💬",
+        "pull_request_review": "🔍", "pull_request_review_comment": "💬",
+        "discussion": "🗣️", "discussion_comment": "💬",
+        "fork": "🍴", "watch": "👀", "star": "⭐",
+        "label": "🏷️", "milestone": "🎯", "deployment": "🚀",
+        "deployment_status": "🚦", "status": "📊",
+        "check_run": "🧪", "check_suite": "🧪",
+        "workflow_dispatch": "🔔",
+    }
+    icon = icons.get(EVENT, "🔔")
+    title = f"{icon} {EVENT.replace('_', ' ').title()}"
+    if ACTION:
+        title += f" · {ACTION.replace('_', ' ')}"
+    obj = next((event[k] for k in (
+        "comment", "review", "discussion", "issue", "pull_request",
+        "release", "deployment", "check_run", "check_suite",
+        "milestone", "label", "forkee",
+    ) if isinstance(event.get(k), dict)), {})
+    url = safe_url(obj.get("html_url")) or safe_url(event.get("compare")) or url
+    subject = obj.get("title") or obj.get("name") or obj.get("message")
+    description = clip(subject or f"{actor_name} triggered a {EVENT.replace('_', ' ')} event.", 1500)
+    fields = [field("Event", EVENT), field("Action", ACTION or "Triggered")]
+    if event.get("ref"):
+        fields.append(field("Ref", event["ref"], False))
+    if event.get("ref_type"):
+        fields.append(field("Ref type", event["ref_type"]))
+    if obj.get("state"):
+        fields.append(field("State", obj["state"]))
+    if obj.get("number"):
+        fields.append(field("Number", obj["number"]))
+    color = 0x5865F2
 
 embed = {
     "title": clip(title, 256),
