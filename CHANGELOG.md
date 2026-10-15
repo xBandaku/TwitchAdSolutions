@@ -1,6 +1,24 @@
 ## Unreleased
 
-- Reacquire the current player-owned video for delayed post-reload unmute and drift correction. Keep separate ad videos muted, leave replaced elements alone, and skip live recovery after VOD navigation or player unmount. Applies to vaft 68.5.9 and vaft testing 680.0.0, including their uBlock variants.
+## v68.5.9 (2026-10-15)
+
+### Fixed
+- Reacquire the current player-owned video for delayed post-reload unmute and drift correction. Keep separate ad videos muted, leave replaced elements alone, and skip live recovery after VOD navigation or player unmount. Applies to vaft 68.5.9 and vaft testing 680.0.0, including their uBlock variants ([#2](https://github.com/xBandaku/TwitchAdSolutions/pull/2)).
+
+### Tests and releases
+- Run helper tests against the shipped vaft functions ([#3](https://github.com/xBandaku/TwitchAdSolutions/pull/3)).
+- Check Node.js 22 and 24 on Windows and Linux. Validate JavaScript syntax, userscript metadata, paired userscript/uBlock logic, serialized workers, and packaged files ([#5](https://github.com/xBandaku/TwitchAdSolutions/pull/5), [#7](https://github.com/xBandaku/TwitchAdSolutions/pull/7)).
+- Run offline browser fixtures in Chromium, Firefox, and WebKit. Save browser reports, failure traces, and installable script artifacts in GitHub Actions ([#7](https://github.com/xBandaku/TwitchAdSolutions/pull/7)).
+- Extract notes for the selected version, attach the stable userscript, and reject publishing from other branches or reusing an existing tag. Release dry runs and repeatable publishing tests are available ([#6](https://github.com/xBandaku/TwitchAdSolutions/pull/6)).
+
+### Documentation
+- Correct backup-pinning defaults and explain the 360p fallback ([#4](https://github.com/xBandaku/TwitchAdSolutions/pull/4)).
+- Refresh the fork README and link installation to the latest stable release. Update uBlock permalinks to v68.5.9.
+
+### Validation
+- Passed 393 runtime assertions, 40 project checks, and 11 release-workflow tests.
+- Passed 111 offline browser tests across Chromium, Firefox, and WebKit.
+- A short manual live-stream recording showed playback continuing with the autoplay backup active. Post-ad recovery to full quality and native picture-in-picture behavior still need manual verification.
 
 ## v68.5.8 (2026-10-15)
 
