@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Evaluate post-ad cycle recovery using the freeze count captured before break cleanup. Prolonged freezes can no longer skip the recovery reload after the counter resets. Fixes #10.
+
 - Keep the first ad-end candidate alive across alternating markers, expire it only after clean playlist progress stops, and require advancing playlists for clean confirmations. Ports Antidrew distinct-playlist checks while keeping the three-confirmation threshold. Fixes #11.
 
 - Serialize playlist state updates per stream, ignore out-of-order responses, and prevent obsolete sessions or replaced workers from controlling the current player. Adapted Antidrew session guards for Twitch embeds.
