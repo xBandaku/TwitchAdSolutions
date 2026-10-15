@@ -3,8 +3,8 @@
 // @namespace    https://github.com/ryanbr/TwitchAdSolutions
 // @version      1.3.1
 // @description  Bypass Brave fingerprint detection on Twitch GQL/integrity requests by retrying via GM_xmlHttpRequest with header spoofs (Sec-Ch-Ua brand rewrite from Brave to Google Chrome with synthetic fallback when userAgentData hidden, Sec-Ch-Ua-Platform, Sec-Ch-Ua-Mobile, Firefox User-Agent, explicit Origin/Referer/Host, Accept-Language). Also hides navigator.brave and rebrands navigator.userAgentData.brands / getHighEntropyValues from "Brave" to "Google Chrome" so Twitch JS can't preemptively flag the session. Per-request retry: each interceptable request goes native first, sniffs for `errors` in the response body, and retries that specific request via GM xhr if needed — fixes occasional fingerprint-driven failures (e.g. Brave login on www.twitch.tv) without paying the GM xhr tax on every successful request. Companion to vaft / video-swap-new. A uBlock Origin scriptlet variant (twitch-brave-fix-ublock-origin.js) is also available but covers JS-surface spoofs only — the GM xhr header-retry path is userscript-exclusive (Tampermonkey / Violentmonkey / Greasemonkey 4+).
-// @updateURL    https://github.com/ryanbr/TwitchAdSolutions/raw/master/vaft/twitch-brave-fix.user.js
-// @downloadURL  https://github.com/ryanbr/TwitchAdSolutions/raw/master/vaft/twitch-brave-fix.user.js
+// @updateURL    https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/twitch-brave-fix.user.js
+// @downloadURL  https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/twitch-brave-fix.user.js
 // @author       https://github.com/ryanbr/TwitchAdSolutions
 // @match        *://*.twitch.tv/*
 // @run-at       document-start

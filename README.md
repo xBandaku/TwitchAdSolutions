@@ -1,33 +1,47 @@
-Fork of [ryanbr/TwitchAdSolutions](https://github.com/ryanbr/TwitchAdSolutions), originally based on [pixeltris/TwitchAdSolutions](https://github.com/pixeltris/TwitchAdSolutions) (archived).
+<!-- markdownlint-disable MD033 MD041 -->
+<div align="center">
 
 # TwitchAdSolutions
 
-Install [vaft v68.5.8](https://github.com/xBandaku/TwitchAdSolutions/releases/download/v68.5.8/vaft.user.js) in Violentmonkey. See the [release notes](https://github.com/xBandaku/TwitchAdSolutions/releases/tag/v68.5.8) for the fixes and testing limits.
+[![Version](https://img.shields.io/github/v/release/xBandaku/TwitchAdSolutions?color=%230567ff&label=Latest%20Release&style=for-the-badge)](https://github.com/xBandaku/TwitchAdSolutions/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/xBandaku/TwitchAdSolutions/total?label=Total%20Downloads&style=for-the-badge)](https://github.com/xBandaku/TwitchAdSolutions/releases)
+[![License](https://img.shields.io/github/license/xBandaku/TwitchAdSolutions?style=for-the-badge)](LICENSE)
 
-This repo aims to provide multiple solutions for blocking Twitch ads.
+</div>
+<!-- markdownlint-enable MD033 MD041 -->
+
+Scripts for blocking Twitch ads with Violentmonkey or uBlock Origin. Start with `vaft` using the installation steps below.
+
+Fork of [ryanbr/TwitchAdSolutions](https://github.com/ryanbr/TwitchAdSolutions), originally based on [pixeltris/TwitchAdSolutions](https://github.com/pixeltris/TwitchAdSolutions) (archived).
 
 **Don't combine Twitch specific ad blockers.**
 
-## Recommendations
+## Contents
 
-Proxies are the most reliable way of avoiding ads ([buffering / downtime info](full-list.md#proxy-issues)).
+- [1. Install vaft (Violentmonkey)](#1-install-vaft-violentmonkey)
+- [2. Choose a script](#2-choose-a-script)
+- [3. Install with uBlock Origin](#3-install-with-ublock-origin)
+- [Configuration](#configuration)
+- [Known extension conflicts](#known-extension-conflicts)
+- [Troubleshooting](#troubleshooting)
+- [Other solutions](#other-solutions)
+- [License](#license)
 
-- `TTV LOL PRO` - [chrome](https://chrome.google.com/webstore/detail/ttv-lol-pro/bpaoeijjlplfjbagceilcgbkcdjbomjd) / [firefox](https://addons.mozilla.org/addon/ttv-lol-pro/) / [code](https://github.com/younesaassila/ttv-lol-pro)
+## 1. Install vaft (Violentmonkey)
 
-Alternatively:
+1. Install [Violentmonkey](https://violentmonkey.github.io/) in your browser.
+2. Open [vaft v68.5.8](https://github.com/xBandaku/TwitchAdSolutions/releases/download/v68.5.8/vaft.user.js) and confirm installation in Violentmonkey. If your browser downloads the file, import `vaft.user.js` through Violentmonkey's dashboard.
+3. Reload any open Twitch stream.
 
-- `Twitch Turbo` - https://www.twitch.tv/turbo
-- `Alternate Player for Twitch.tv` - [chrome](https://chrome.google.com/webstore/detail/alternate-player-for-twit/bhplkbgoehhhddaoolmakpocnenplmhf) / [firefox](https://addons.mozilla.org/en-US/firefox/addon/twitch_5/)
-- `AdGuard Extra` - [chrome](https://chrome.google.com/webstore/detail/adguard-extra-beta/mglpocjcjbekdckiahfhagndealpkpbj) / [firefox](https://github.com/AdguardTeam/AdGuardExtra/#firefox) / [userscript](https://userscripts.adtidy.org/release/adguard-extra/1.0/adguard-extra.user.js)
-- `vaft` - see below
+The [release notes](https://github.com/xBandaku/TwitchAdSolutions/releases/tag/v68.5.8) list the fixes and testing limits. For future stable updates, check the [latest release](https://github.com/xBandaku/TwitchAdSolutions/releases/latest).
 
-[Read this for a full list and descriptions.](full-list.md)
+[Tampermonkey](https://www.tampermonkey.net/) and [Userscripts for Safari](https://apps.apple.com/us/app/userscripts/id1463298887) are other supported managers. Greasemonkey doesn't work with the scripts.
 
-[Also see this list maintained by @zGato.](https://github.com/zGato/ScrewTwitchAds)
+On browsers that require userscript permissions, enable them in the extension settings. See [troubleshooting](issues.md) for details.
 
-## Scripts
+## 2. Choose a script
 
-**There are better / easier to use methods in the above recommendations.**
+`vaft` is recommended for this fork. See [other solutions](#other-solutions) for alternatives.
 
 - vaft - [userscript](https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft.user.js) / [ublock](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/master/vaft/vaft-ublock-origin.js) / [ublock (permalink)](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/v68.5.8/vaft/vaft-ublock-origin.js)
   - Attempts to get a clean stream as fast as it can
@@ -37,7 +51,7 @@ Alternatively:
   - If it fails to get a clean stream it removes ad segments (no playback until ad-free stream is found)
   - Not recommended, `vaft` is a better script
 
-## Applying a script (uBlock Origin)
+## 3. Install with uBlock Origin
 
 - Navigate to the uBlock Origin Dashboard (the extension options)
 - Under the `My filters` tab add `twitch.tv##+js(twitch-videoad)`.
@@ -49,18 +63,6 @@ To stop using a script remove the filter and make the url `unset`.
 *For the sake of security it's recommended to use a permalink when using uBlock Origin (permalinks do not auto update).*
 
 *The scripts __may randomly stop being applied by uBlock Origin__ for unknown reasons ([#200](https://github.com/pixeltris/TwitchAdSolutions/issues/200)). It's recommended to use the userscript versions instead.*
-
-## Applying a script (userscript)
-
-Viewing one of the userscript files should prompt the given script to be added when you have a userscript manager installed.
-
-Userscript managers:
-
-- https://violentmonkey.github.io/
-- https://www.tampermonkey.net/
-- https://apps.apple.com/us/app/userscripts/id1463298887
-
-*Greasemonkey doesn't work with the scripts.*
 
 ## Configuration
 
@@ -86,7 +88,7 @@ The scripts support runtime configuration via `localStorage`. Set values in the 
 **`twitchAdSolutions_pinBackupPlayerType`** (default: `false`)
 - `true` - remember which backup player type worked and try it first on next ad break (saves backup search time)
 - `false` - always iterate through backup types fresh (default)
-- ⚠ **Quality caveat**: if the pinned type is `autoplay`, backups during ad breaks stay at 360p even when a source-quality backup would have worked. Only enable if you prefer consistent ad-break experience over backup quality.
+- **Quality caveat**: if the pinned type is `autoplay`, backups during ad breaks stay at 360p even when a source-quality backup would have worked. Only enable if you prefer consistent ad-break experience over backup quality.
 
 **`twitchAdSolutions_reloadCooldownSeconds`** (default: `30`)
 - Minimum seconds between player reloads after ad breaks
@@ -96,17 +98,17 @@ The scripts support runtime configuration via `localStorage`. Set values in the 
 **`twitchAdSolutions_disableReloadCap`** (default: not set)
 - `true` - buffer monitor reloads unlimited times (pre-v47 behavior, risk of reload loops)
 - Not set - buffer monitor reloads at most once per recovery window (default)
-- Only enable if you're seeing genuinely stuck playback that a single reload doesn't fix
+- Only enable if you're seeing stuck playback that a single reload doesn't fix
 
 **`twitchAdSolutions_preferLowQualityBackup`** (default: `true`, vaft only)
 - Hybrid safety net for SSAI-heavy ad breaks. Adds `autoplay` (360p) as a last-resort backup when all Source types (site/popout/mobile_web/embed) are ad-laden. Also enables the sticky escape hatch (~8s stuck → fall through to backup search) when `twitchAdSolutions_backupSwapFirst=false`.
 - Set to `false` to disable the autoplay fallback and escape hatch
-- ⚠ **Quality caveat**: autoplay only commits when every Source backup is also ad-laden — rare, but the 360p hit is the tradeoff for avoiding long freezes on SSAI-heavy channels
+- **Quality caveat**: autoplay only commits when every Source backup is also ad-laden. The 360p hit is the tradeoff for avoiding long freezes on SSAI-heavy channels
 
 **`twitchAdSolutions_backupSwapFirst`** (default: `true`, vaft only)
-- **Default ad-blocking path** (as of v63.0.0). On ad detect, immediately swap to a backup player-type m3u8 (site → popout → mobile_web → embed, first clean wins). Avoids the MediaSource mixing that the legacy strip+BLANK_MP4+recovery path produces — fewer loading circles and no A/V desync accumulation.
+- **Default ad-blocking path** (as of v63.0.0). On ad detect, immediately swap to a backup player-type m3u8 (site → popout → mobile_web → embed, first clean wins). Avoids the MediaSource mixing produced by the legacy strip+BLANK_MP4+recovery path.
 - Set to `false` to revert to the legacy sticky CSAI strip-first path. Use this if you're on a channel/network where backup fetches are unreliable and stripping native is preferable.
-- ⚠ **Bandwidth tradeoff**: extra token fetch on every ad break (~400ms first time per session, much less after `BackupEncodingsM3U8Cache` warms up).
+- **Bandwidth tradeoff**: extra token fetch on every ad break (~400ms first time per session, much less after `BackupEncodingsM3U8Cache` warms up).
 
 ```js
 // Faster post-ad transition
@@ -129,14 +131,35 @@ localStorage.removeItem('twitchAdSolutions_preferLowQualityBackup');
 localStorage.removeItem('twitchAdSolutions_backupSwapFirst');
 ```
 
-## Known Extension Conflicts
+## Known extension conflicts
 
-- **7TV** — may cause black screen / infinite buffering ([#17](https://github.com/ryanbr/TwitchAdSolutions/issues/17))
-- **TwitchNoSub** — handled automatically via workerStringReinsert, but older versions may conflict
-- **TTV-AB** — running both simultaneously may cause duplicate ad blocking and errors. Use one or the other.
-- **Purple AdBlock** — may conflict if both are active. Disable one.
-- **AdGuard Extra** — operates at a different layer, can be used alongside without conflict
+- **7TV**: may cause black screen / infinite buffering ([#17](https://github.com/ryanbr/TwitchAdSolutions/issues/17))
+- **TwitchNoSub**: handled automatically via workerStringReinsert, but older versions may conflict
+- **TTV-AB**: running both simultaneously may cause duplicate ad blocking and errors. Use one or the other.
+- **Purple AdBlock**: may conflict if both are active. Disable one.
+- **AdGuard Extra**: operates at a different layer, can be used alongside without conflict
 
-## Issues with the scripts
+## Troubleshooting
 
 If the script doesn't work or you're experiencing freezing / buffering issues see [issues.md](issues.md)
+
+## Other solutions
+
+Proxies are the most reliable way of avoiding ads ([buffering / downtime info](full-list.md#proxy-issues)).
+
+- `TTV LOL PRO` - [chrome](https://chrome.google.com/webstore/detail/ttv-lol-pro/bpaoeijjlplfjbagceilcgbkcdjbomjd) / [firefox](https://addons.mozilla.org/addon/ttv-lol-pro/) / [code](https://github.com/younesaassila/ttv-lol-pro)
+
+Alternatively:
+
+- `Twitch Turbo` - https://www.twitch.tv/turbo
+- `Alternate Player for Twitch.tv` - [chrome](https://chrome.google.com/webstore/detail/alternate-player-for-twit/bhplkbgoehhhddaoolmakpocnenplmhf) / [firefox](https://addons.mozilla.org/en-US/firefox/addon/twitch_5/)
+- `AdGuard Extra` - [chrome](https://chrome.google.com/webstore/detail/adguard-extra-beta/mglpocjcjbekdckiahfhagndealpkpbj) / [firefox](https://github.com/AdguardTeam/AdGuardExtra/#firefox) / [userscript](https://userscripts.adtidy.org/release/adguard-extra/1.0/adguard-extra.user.js)
+- [vaft](#1-install-vaft-violentmonkey)
+
+[Read this for a full list and descriptions.](full-list.md)
+
+[Also see this list maintained by @zGato.](https://github.com/zGato/ScrewTwitchAds)
+
+## License
+
+Licensed under the [MIT License](LICENSE). See [CHANGELOG.md](CHANGELOG.md) for this fork's changes.
