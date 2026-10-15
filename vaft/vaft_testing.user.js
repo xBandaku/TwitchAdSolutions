@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TwitchAdSolutions (vaft-testing)
 // @namespace    https://github.com/ryanbr/TwitchAdSolutions
-// @version      689.0.0
+// @version      690.0.0
 // @description  Multiple solutions for blocking Twitch ads (vaft testing variant)
 // @updateURL    https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft_testing.user.js
 // @downloadURL  https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft_testing.user.js
@@ -48,7 +48,7 @@
         }
     }
     'use strict';
-    const ourTwitchAdSolutionsVersion = 689;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 690;// Used to prevent conflicts with outdated versions of the scripts
     console.log('[AD DEBUG] TwitchAdSolutions vaft-testing v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
         console.log('[AD DEBUG] CONFLICT: vaft-testing v' + ourTwitchAdSolutionsVersion + ' skipped — another script already active (v' + window.twitchAdSolutionsVersion + '). Remove duplicate scripts.');
@@ -2811,7 +2811,7 @@
             const request = { promise: null, cancelled: false };
             let resolveRecovery, pollTimer, cleanupMute = () => {};
             let attempt = 0, deadline = 0, observedVideo = null, initialTime = 0, playedVideo = null;
-            let settingsAfterReload;
+            let settingsAfterReload, preMutedVideo = null;
             const hardReload = reloadKind === 'early' && !iosSoftReload;
             const refreshToken = reloadKind === 'early';
             const isCurrent = () => {
@@ -2823,6 +2823,7 @@
             const finish = success => {
                 clearTimeout(pollTimer);
                 if (!success) {
+                    rollbackPreMute();
                     request.cancelled = true;
                     cleanupMute();
                 }
@@ -2834,7 +2835,25 @@
             request.promise = new Promise(resolve => { resolveRecovery = resolve; });
             doTwitchPlayerTask.recovery = request;
             doTwitchPlayerTask.latestRecovery = request;
-            const muteWasChanged = () => preserveSettings && localStorage.getItem('video-muted') !== settingsAfterReload.get('video-muted');
+            const muteWasChanged = () => {
+                if (!preserveSettings) return false;
+                try {
+                    return localStorage.getItem('video-muted') !== settingsAfterReload.get('video-muted');
+                } catch (error) {
+                    preserveSettings = false;
+                    console.log('[AD DEBUG] Could not read mute intent: ' + error.message);
+                    return true;
+                }
+            };
+            const rollbackPreMute = () => {
+                const current = getPlayerAndState();
+                if (preMutedVideo && doTwitchPlayerTask.latestRecovery === request
+                    && window.location.href === route && current?.state?.props?.content?.type === 'live'
+                    && current.player?.getHTMLVideoElement?.() === preMutedVideo && !muteWasChanged()) {
+                    preMutedVideo.muted = false;
+                }
+                preMutedVideo = null;
+            };
             const restoreMute = () => {
                 if (!isCurrent() || muteWasChanged() || snapshot.get('video-muted')?.includes('"default":true')) return;
                 const current = getPlayerAndState()?.player?.getHTMLVideoElement?.();
@@ -2918,6 +2937,7 @@
                 const video = player.getHTMLVideoElement?.();
                 const shouldRecover = playerBufferState.vaftEverUnmuted && RecoverFromSilentMute;
                 if (video && (!video.muted || shouldRecover) && !snapshot.get('video-muted')?.includes('"default":true')) {
+                    if (!video.muted) preMutedVideo = video;
                     video.muted = true;
                     const listener = event => {
                         if (event.target === getPlayerAndState()?.player?.getHTMLVideoElement?.()) {
