@@ -1,5 +1,23 @@
 ## Unreleased
 
+## v68.5.8 (2026-10-15)
+
+### Fixed
+- Keep the vaft buffer monitor scheduled after a failed tick and share one timer with visibility wakeups ([#242](https://github.com/ryanbr/TwitchAdSolutions/pull/242)).
+- Rebuild relayed responses with null bodies for statuses 204, 205 and 304. Reject invalid statuses and response-construction errors instead of leaving fetches pending ([#243](https://github.com/ryanbr/TwitchAdSolutions/pull/243)).
+- Keep the GQL abort timeout active through the response-body read. Cap spoofed ads at the declared pod length and avoid claiming completion when the pod length is unknown ([#240](https://github.com/ryanbr/TwitchAdSolutions/pull/240)).
+- Seek past buffered gaps after three frozen playback intervals during live CSAI breaks. Preserve deliberate pauses and reset gap tracking outside eligible breaks ([#244](https://github.com/ryanbr/TwitchAdSolutions/pull/244)).
+- Restrict visibility-driven auto-resume to live streams in vaft and video-swap-new. Preserve paused VODs and use the player-owned video element. Vaft also respects recorded pause intent; testing retries verify the current player and content type ([#245](https://github.com/ryanbr/TwitchAdSolutions/issues/245)).
+- Restore the release PiP reload guard in vaft testing. Use pause/play while PiP is active and preserve paused playback ([#262](https://github.com/ryanbr/TwitchAdSolutions/issues/262)). Browser-native PiP behavior still needs field testing.
+
+### Diagnostics
+- Add a worker-lifetime spoofed-ad count and clarify that spoofing is disabled by default. Keep the existing CSAI request counters ([#235](https://github.com/ryanbr/TwitchAdSolutions/pull/235)).
+- Correct the release worker-crash comment: its direct reload bypasses the worker-side cooldown ([#234](https://github.com/ryanbr/TwitchAdSolutions/pull/234)).
+
+### Distribution
+- Set Violentmonkey page injection explicitly. Point userscript updates and installation links to this fork.
+- Includes vaft 68.5.8, vaft testing 679.0.0, and video-swap-new 1.88.
+
 ## v68.5.7 (2026-08-27)
 
 ### Debug Logging

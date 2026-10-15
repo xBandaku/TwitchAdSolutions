@@ -1,6 +1,6 @@
 # TwitchAdSolutions
 
-Fork of pixeltris/TwitchAdSolutions (archived). Remote `origin` = pixeltris, remote `master` = ryanbr.
+Fork of ryanbr/TwitchAdSolutions, originally based on pixeltris/TwitchAdSolutions (archived). Remote `origin` = xBandaku, remote `upstream` = ryanbr.
 
 ## Worker Blob Serialization (CRITICAL)
 
@@ -32,7 +32,7 @@ uBlock files have `twitch-videoad.js text/javascript` as line 1 (not valid JS â€
 
 ## Versions
 
-Bump `@version` (userscript header) and `ourTwitchAdSolutionsVersion` together for functional changes. Current: vaft 68.5.7/93, video-swap-new 1.87/55, strip 1.10/27. Testing: vaft 678.0.0/678, video-swap-new -/621.
+Bump `@version` (userscript header) and `ourTwitchAdSolutionsVersion` together for functional changes. Current: vaft 68.5.8/94, video-swap-new 1.88/56, strip 1.10/27. Testing: vaft 679.0.0/679, video-swap-new -/622.
 
 ## localStorage Config
 

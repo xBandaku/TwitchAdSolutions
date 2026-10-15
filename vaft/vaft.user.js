@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         TwitchAdSolutions (vaft)
 // @namespace    https://github.com/ryanbr/TwitchAdSolutions
-// @version      68.5.7
+// @version      68.5.8
 // @description  Multiple solutions for blocking Twitch ads (vaft)
-// @updateURL    https://github.com/ryanbr/TwitchAdSolutions/raw/master/vaft/vaft.user.js
-// @downloadURL  https://github.com/ryanbr/TwitchAdSolutions/raw/master/vaft/vaft.user.js
+// @updateURL    https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft.user.js
+// @downloadURL  https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft.user.js
 // @author       https://github.com/cleanlock/VideoAdBlockForTwitch#credits
 // @match        *://*.twitch.tv/*
 // @run-at       document-start
+// @inject-into  page
 // @grant        none
 // ==/UserScript==
 (function() {
@@ -47,7 +48,7 @@
         }
     }
     'use strict';
-    const ourTwitchAdSolutionsVersion = 93;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 94;// Used to prevent conflicts with outdated versions of the scripts
     console.log('[AD DEBUG] TwitchAdSolutions vaft v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
         console.log('[AD DEBUG] CONFLICT: vaft v' + ourTwitchAdSolutionsVersion + ' skipped — another script already active (v' + window.twitchAdSolutionsVersion + '). Remove duplicate scripts.');
@@ -411,21 +412,22 @@
                                 if (responseData.error) {
                                     reject(new Error(responseData.error));
                                 } else {
-                                    // Create a Response object from the response data.
-                                    // Response constructor only takes status/statusText/headers — url/redirected/type
-                                    // must be defined on the instance. IVS WASM validates these (Spade/tracking
-                                    // requests) and throws NetworkError if they're missing — TTV-AB v6.3.5 fix.
-                                    const response = new Response(responseData.body, {
-                                        status: responseData.status,
-                                        statusText: responseData.statusText,
-                                        headers: responseData.headers
-                                    });
                                     try {
+                                        // Empty strings are bodies too; these statuses require null.
+                                        const nullBodyStatus = responseData.status === 204 || responseData.status === 205 || responseData.status === 304;
+                                        const response = new Response(nullBodyStatus ? null : responseData.body, {
+                                            status: responseData.status,
+                                            statusText: responseData.statusText,
+                                            headers: responseData.headers
+                                        });
+                                        // IVS validates response metadata that the constructor cannot set.
                                         Object.defineProperty(response, 'url', { value: responseData.url || '', configurable: true });
                                         Object.defineProperty(response, 'redirected', { value: !!responseData.redirected, configurable: true });
                                         Object.defineProperty(response, 'type', { value: responseData.type || 'basic', configurable: true });
-                                    } catch {}
-                                    resolve(response);
+                                        resolve(response);
+                                    } catch (error) {
+                                        reject(error);
+                                    }
                                 }
                             }
                         } else if (e.data.key == 'TriggeredPlayerReload') {
@@ -512,12 +514,9 @@
                         });
                     }
                 });
-                // Worker crash recovery — IVS WASM worker can fire RuntimeError
-                // (e.g. "index out of bounds") and die. A single crash fires multiple
-                // error events; dedupe via a local flag. On first error, trigger a
-                // hard reload via the main reload path — Twitch re-spawns the worker
-                // as part of the new player instance, and existing reload cooldown
-                // prevents runaway restart loops.
+                // IVS WASM crashes can emit several error events. Deduplicate per worker.
+                // Recovery calls the main reload path directly and bypasses the worker's
+                // reload cooldown; there is no guard across successive crashed workers.
                 let crashed = false;
                 this.addEventListener('error', (e) => {
                     if (crashed) return;
@@ -771,19 +770,21 @@
             // all ads in the pod even though they surface one poll at a time.
             const podLenMatch = textStr.match(/X-TV-TWITCH-AD-POD-LENGTH="(\d+)"/);
             const podLength = podLenMatch ? parseInt(podLenMatch[1], 10) : matches.length;
+            const hasExplicitPodLength = !!podLenMatch;
             // Hot-path early-out: notifyAdComplete now runs every ad-laden poll, and a
             // long multi-ad break has hundreds of polls AFTER the whole pod is already
             // spoofed. Once the dedup set covers the pod, every remaining poll is pure
             // waste — bail before the per-match parseAttributes loop. (size at entry is
             // before this poll's additions, so the poll that completes the pod still
             // runs and attaches pod_complete; only subsequent polls short-circuit.)
-            if (spoofedSet && spoofedSet.size >= podLength) {
+            if (hasExplicitPodLength && spoofedSet && spoofedSet.size >= podLength) {
                 return;
             }
             let newSpoofed = 0;
             let firstRollType = '';
             let podCompleteSent = false;
             for (let i = 0; i < matches.length; i++) {
+                if (hasExplicitPodLength && spoofedSet && spoofedSet.size >= podLength) break;
                 // Cheap ID pre-extract for the dedup check — the DATERANGE capture
                 // always starts with ID="stitched-ad-<UUID>". Checking the dedup set
                 // before the full parseAttributes() avoids re-parsing every already-
@@ -848,15 +849,8 @@
                     makePacket('video_ad_quartile_complete', { quartile: 3 }),
                     makePacket('video_ad_quartile_complete', { quartile: 4 }),
                 ];
-                // pod_complete fires ONCE per pod — not per ad. A real player sends a
-                // single pod_complete after the whole pod finishes; emitting it on every
-                // ad (6× for a 6-ad pod) is itself a fingerprint. Attach it to the ad
-                // that brings the dedup set up to the true pod size (the last ad). If
-                // the pod never fully surfaces (some DATERANGEs missed / break ended
-                // early) pod_complete is correctly never sent — a real player wouldn't
-                // claim pod completion it didn't reach either. Defensive fallback (no
-                // dedup set): keep per-ad pod_complete so the signal isn't lost.
-                if (!spoofedSet || spoofedSet.size === podLength) {
+                // Complete only a declared pod, after its final ad.
+                if (hasExplicitPodLength && (!spoofedSet || spoofedSet.size === podLength)) {
                     batch.push(makePacket('video_ad_pod_complete'));
                     podCompleteSent = true;
                 }
@@ -883,7 +877,8 @@
                 // single video_ad_pod_complete (lets you confirm pod completion
                 // explicitly instead of inferring it from the total/POD ratio).
                 const src = (streamInfo && streamInfo.ActiveBackupPlayerType) || 'primary';
-                console.log('[AD DEBUG] Spoofed ad completion for ' + newSpoofed + ' new ad(s) (' + total + '/' + podLength + ' pod) — roll: ' + firstRollType + ', src: ' + src + ', pod-complete: ' + (podCompleteSent ? 'yes' : 'no'));
+                notifyAdComplete.sessionAdsSpoofed = (notifyAdComplete.sessionAdsSpoofed || 0) + newSpoofed;
+                console.log('[AD DEBUG] Spoofed ad completion for ' + newSpoofed + ' new ad(s) (' + total + '/' + podLength + ' pod) ; roll: ' + firstRollType + ', src: ' + src + ', pod-complete: ' + (podCompleteSent ? 'yes' : 'no') + ' [worker: ' + notifyAdComplete.sessionAdsSpoofed + ' ads spoofed]');
             }
         } catch (err) {
             console.log('[AD DEBUG] Ad completion spoof failed: ' + err.message);
@@ -2000,10 +1995,15 @@
         loggedPauseIntent: false,
         weJustPaused: 0,
         inAdBreak: false,
-        vaftEverUnmuted: false
+        vaftEverUnmuted: false,
+        gapJumpLastPosition: -1,
+        gapJumpStuckTicks: 0
     };
     // Poll the player state to detect and fix buffering caused by ad stream switching
     function monitorPlayerBuffering() {
+        clearTimeout(monitorPlayerBuffering.timeoutId);
+        let rescheduleDelay = PlayerBufferingDelay;
+        try {
         // Fresh player lookup every tick (avoids stale ref when Twitch restarts its own player)
         playerForMonitoringBuffering = null;
         {
@@ -2017,7 +2017,8 @@
                 if (video && !video.__tasIntentHooked) {
                     video.__tasIntentHooked = true;
                     video.addEventListener('pause', () => {
-                        if (!playerBufferState.weJustPaused || (Date.now() - playerBufferState.weJustPaused) > 2000) {
+                        // Twitch can pause a hidden live stream without user input.
+                        if (!document.hidden && (!playerBufferState.weJustPaused || (Date.now() - playerBufferState.weJustPaused) > 2000)) {
                             playerBufferState.userPauseIntent = true;
                         }
                     });
@@ -2185,6 +2186,34 @@
                 playerForMonitoringBuffering = null;
             }
         }
+        // CSAI swaps can leave a buffered hole. Seek only after playback stops advancing.
+        if (playerBufferState.inAdBreak && !isActivelyStrippingAds && !playerBufferState.userPauseIntent
+            && playerForMonitoringBuffering?.state?.props?.content?.type === 'live') {
+            const video = playerForMonitoringBuffering.player.getHTMLVideoElement?.();
+            const position = video ? video.currentTime : 0;
+            const lastPosition = playerBufferState.gapJumpLastPosition;
+            if (!video || video.paused || video.ended || lastPosition < 0 || position > lastPosition + 0.2 || position < lastPosition) {
+                playerBufferState.gapJumpStuckTicks = 0;
+            } else {
+                playerBufferState.gapJumpStuckTicks++;
+            }
+            playerBufferState.gapJumpLastPosition = video && !video.paused && !video.ended ? position : -1;
+            if (video && !video.paused && !video.ended && playerBufferState.gapJumpStuckTicks >= 3 && video.readyState < 3 && video.buffered.length > 1) {
+                for (let i = 0; i < video.buffered.length; i++) {
+                    const gapStart = video.buffered.start(i);
+                    if (gapStart > position + 0.25) {
+                        console.log('[AD DEBUG] In-ad buffer-gap seek: ' + position.toFixed(1) + 's to ' + gapStart.toFixed(1) + 's');
+                        video.currentTime = gapStart + 0.05;
+                        playerBufferState.gapJumpStuckTicks = 0;
+                        playerBufferState.gapJumpLastPosition = -1;
+                        break;
+                    }
+                }
+            }
+        } else {
+            playerBufferState.gapJumpStuckTicks = 0;
+            playerBufferState.gapJumpLastPosition = -1;
+        }
         // Post-break video-wedge recovery (mirrors GosuDRM/TTV-AB _checkPostBreakWedge, v12.0.0):
         // the "frozen video with running audio after an ad break" case (often after switching tabs and
         // coming back). The playhead keeps ADVANCING (audio clock alive) but the decoder stops emitting
@@ -2321,9 +2350,9 @@
         if (typeof document !== 'undefined' && !monitorPlayerBuffering.visibilityHooked) {
             monitorPlayerBuffering.visibilityHooked = true;
             document.addEventListener('visibilitychange', () => {
-                if (!document.hidden && !monitorPlayerBuffering.pendingTick) {
-                    monitorPlayerBuffering.pendingTick = true;
-                    setTimeout(() => { monitorPlayerBuffering.pendingTick = false; monitorPlayerBuffering(); }, 100);
+                if (!document.hidden) {
+                    clearTimeout(monitorPlayerBuffering.timeoutId);
+                    monitorPlayerBuffering.timeoutId = setTimeout(monitorPlayerBuffering, 100);
                 }
             });
         }
@@ -2339,8 +2368,10 @@
         // stall some users hit when a break starts on a backgrounded tab (issue #129). Workaround, not a full fix:
         // background media deprioritization is browser-level. Negligible cost — only polls faster while hidden + in-break.
         const shouldThrottle = typeof document !== 'undefined' && document.hidden && !document.pictureInPictureElement && !playerBufferState.inAdBreak;
-        const nextDelay = shouldThrottle ? PlayerBufferingDelay * 3 : PlayerBufferingDelay;
-        setTimeout(monitorPlayerBuffering, nextDelay);
+        rescheduleDelay = shouldThrottle ? PlayerBufferingDelay * 3 : PlayerBufferingDelay;
+        } finally {
+            monitorPlayerBuffering.timeoutId = setTimeout(monitorPlayerBuffering, rescheduleDelay);
+        }
     }
     // document.querySelector('video') returns the first <video> in the DOM, which since
     // July 2026 can be a separate Twitch ad element beside the player or in chat (#249).
@@ -2851,8 +2882,8 @@
                 ...fetchRequest.options,
                 signal: controller.signal
             });
-            clearTimeout(timeoutId);
             const responseBody = await response.text();
+            clearTimeout(timeoutId);
             const responseObject = {
                 id: fetchRequest.id,
                 status: response.status,
@@ -2951,20 +2982,25 @@
         // visibility (e.g. BetterTTV "Mute Invisible Player"). Resume-on-focus alone is
         // enough to keep playback alive across hidden→visible transitions during ads.
         // Sync'd with TTV-AB v6.5.0.
-        let wasVideoPlaying = true;
+        let wasVideoPlaying = false;
         const visibilityChange = () => {
-            const videos = document.getElementsByTagName('video');
-            if (videos.length === 0) return;
+            const playerAndState = getPlayerAndState();
+            const video = playerAndState?.player?.getHTMLVideoElement?.();
+            if (!video || playerAndState?.state?.props?.content?.type !== 'live') {
+                wasVideoPlaying = false;
+                return;
+            }
             if (document.hidden) {
-                wasVideoPlaying = !videos[0].paused && !videos[0].ended;
+                wasVideoPlaying = !video.paused && !video.ended;
                 return;
             }
             if (!playerBufferState.hasStreamStarted) {
                 playerBufferState.hasStreamStarted = true;
             }
-            if (wasVideoPlaying && !videos[0].ended && videos[0].paused) {
-                videos[0].play()?.catch?.(() => {});
+            if (wasVideoPlaying && !playerBufferState.userPauseIntent && !video.ended && video.paused) {
+                video.play()?.catch?.(() => {});
             }
+            wasVideoPlaying = false;
         };
         document.addEventListener('visibilitychange', visibilityChange);
         // Hooks for preserving volume / resolution
@@ -3052,7 +3088,7 @@
         const lsDisableAdSpoofing = localStorage.getItem('twitchAdSolutions_disableAdSpoofing');
         if (lsDisableAdSpoofing === 'false') {
             DisableAdSpoofing = false;
-            console.log('[AD DEBUG] AdSpoofing enabled via localStorage opt-in — firing GQL ad-tracking beacons on ad detect');
+            console.log('[AD DEBUG] AdSpoofing enabled via localStorage opt-in; default is off. Spoof counts reset when the worker restarts.');
         }
         const lsRecoverFromSilentMute = localStorage.getItem('twitchAdSolutions_recoverFromSilentMute');
         if (lsRecoverFromSilentMute === 'false') {

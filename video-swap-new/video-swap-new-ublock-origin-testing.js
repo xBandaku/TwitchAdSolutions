@@ -13,7 +13,7 @@ twitch-videoad.js text/javascript
             return;
         }
     }
-    const ourTwitchAdSolutionsVersion = 621;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 622;// Used to prevent conflicts with outdated versions of the scripts
     console.log('[AD DEBUG] TwitchAdSolutions video-swap-new-testing v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
         console.log('[AD DEBUG] CONFLICT: video-swap-new-testing v' + ourTwitchAdSolutionsVersion + ' skipped — another script already active (v' + window.twitchAdSolutionsVersion + '). Remove duplicate scripts.');
@@ -1435,17 +1435,22 @@ twitch-videoad.js text/javascript
         // extensions that key off real visibility (e.g. BetterTTV "Mute Invisible Player").
         // Resume-on-focus alone is enough to keep playback alive across hidden→visible
         // transitions during ads. Sync'd with TTV-AB v6.5.0.
-        let wasVideoPlaying = true;
+        let wasVideoPlaying = false;
         const visibilityChange = () => {
-            const videos = document.getElementsByTagName('video');
-            if (videos.length === 0) return;
-            if (document.hidden) {
-                wasVideoPlaying = !videos[0].paused && !videos[0].ended;
+            const playerAndState = getPlayerAndState();
+            const video = playerAndState?.player?.getHTMLVideoElement?.();
+            if (!video || playerAndState?.state?.props?.content?.type !== 'live') {
+                wasVideoPlaying = false;
                 return;
             }
-            if (wasVideoPlaying && !videos[0].ended && videos[0].paused) {
-                videos[0].play()?.catch?.(() => {});
+            if (document.hidden) {
+                wasVideoPlaying = !video.paused && !video.ended;
+                return;
             }
+            if (wasVideoPlaying && !video.ended && video.paused) {
+                video.play()?.catch?.(() => {});
+            }
+            wasVideoPlaying = false;
         };
         document.addEventListener('visibilitychange', visibilityChange);
         // Hooks for preserving volume / resolution

@@ -37,7 +37,7 @@ twitch-videoad.js text/javascript
         }
     }
     'use strict';
-    const ourTwitchAdSolutionsVersion = 678;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 679;// Used to prevent conflicts with outdated versions of the scripts
     console.log('[AD DEBUG] TwitchAdSolutions vaft-testing v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
         console.log('[AD DEBUG] CONFLICT: vaft-testing v' + ourTwitchAdSolutionsVersion + ' skipped — another script already active (v' + window.twitchAdSolutionsVersion + '). Remove duplicate scripts.');
@@ -375,27 +375,22 @@ twitch-videoad.js text/javascript
                                 if (responseData.error) {
                                     reject(new Error(responseData.error));
                                 } else {
-                                    // Create a Response object from the response data.
-                                    // Response constructor only takes status/statusText/headers — url/redirected/type
-                                    // must be defined on the instance. IVS WASM validates these (Spade/tracking
-                                    // requests) and throws NetworkError if they're missing — TTV-AB v6.3.5 fix.
-                                    // A null-body status (101/204/205/304) paired with a non-null body
-                                    // makes the Response constructor throw — and a 304/204 relayed here
-                                    // carries an empty-string ('') body (not null), which would throw and
-                                    // hang the relayed fetch. Drop the body for those statuses.
-                                    // Mirrors GosuDRM/TTV-AB v9.7.1 / v9.9.0.
-                                    const _nullBodyStatus = responseData.status === 101 || responseData.status === 204 || responseData.status === 205 || responseData.status === 304;
-                                    const response = new Response(_nullBodyStatus ? null : responseData.body, {
-                                        status: responseData.status,
-                                        statusText: responseData.statusText,
-                                        headers: responseData.headers
-                                    });
                                     try {
+                                        // Empty strings are bodies too; these statuses require null.
+                                        const nullBodyStatus = responseData.status === 204 || responseData.status === 205 || responseData.status === 304;
+                                        const response = new Response(nullBodyStatus ? null : responseData.body, {
+                                            status: responseData.status,
+                                            statusText: responseData.statusText,
+                                            headers: responseData.headers
+                                        });
+                                        // IVS validates response metadata that the constructor cannot set.
                                         Object.defineProperty(response, 'url', { value: responseData.url || '', configurable: true });
                                         Object.defineProperty(response, 'redirected', { value: !!responseData.redirected, configurable: true });
                                         Object.defineProperty(response, 'type', { value: responseData.type || 'basic', configurable: true });
-                                    } catch {}
-                                    resolve(response);
+                                        resolve(response);
+                                    } catch (error) {
+                                        reject(error);
+                                    }
                                 }
                             }
                         } else if (e.data.key == 'TriggeredPlayerReload') {
@@ -804,7 +799,7 @@ twitch-videoad.js text/javascript
                 ];
                 // pod_complete once per pod (not per ad). Defensive fallback: per-ad.
                 // Unknown pod length → never fire (podLength is only this poll's count), per TTV-AB v9.7.3.
-                if (!spoofedSet || (hasExplicitPodLength && spoofedSet.size === podLength)) {
+                if (hasExplicitPodLength && (!spoofedSet || spoofedSet.size === podLength)) {
                     batch.push(makePacket('video_ad_pod_complete'));
                     podCompleteSent = true;
                 }
@@ -1948,7 +1943,9 @@ twitch-videoad.js text/javascript
         for (const delay of BackgroundResumeRetryDelaysMs) {
             backgroundResumeState.timers.push(setTimeout(() => {
                 if (!document.hidden) return;// the tab-focus handler owns the visible side
-                if (video.isConnected && video.paused && !video.ended) {
+                const playerAndState = getPlayerAndState();
+                if (video === playerAndState?.player?.getHTMLVideoElement?.() && playerAndState?.state?.props?.content?.type === 'live'
+                    && !playerBufferState.userPauseIntent && video.isConnected && video.paused && !video.ended) {
                     playPlayer(video, 'hidden-tab resume retry');
                 }
             }, delay));
@@ -1956,6 +1953,7 @@ twitch-videoad.js text/javascript
     }
     // Poll the player state to detect and fix buffering caused by ad stream switching
     function monitorPlayerBuffering() {
+        clearTimeout(monitorPlayerBuffering.timeoutId);
         // Always reschedule the next tick, even if the body throws — a single unexpected
         // exception (e.g. a Twitch-side player-shape change) would otherwise silently kill
         // every stall / frozen-playhead / mute recovery for the rest of the session.
@@ -1979,10 +1977,9 @@ twitch-videoad.js text/javascript
                         if (playerBufferState.weJustPaused && (Date.now() - playerBufferState.weJustPaused) <= 2000) {
                             return;// our own pause (pause/play fix, MSE-teardown) — not user intent
                         }
-                        if (document.hidden && !DisableBackgroundResume) {
-                            // A hidden-tab pause can't be the player's pause button — it's Twitch
-                            // pausing a background tab at ad time (issue #255), not user intent.
-                            scheduleBackgroundResume(video);
+                        if (document.hidden && playerAndState.state.props?.content?.type === 'live') {
+                            // With background retries disabled, focus still owns live recovery.
+                            if (!DisableBackgroundResume) scheduleBackgroundResume(video);
                             return;
                         }
                         playerBufferState.userPauseIntent = true;
@@ -2360,9 +2357,9 @@ twitch-videoad.js text/javascript
         if (typeof document !== 'undefined' && !monitorPlayerBuffering.visibilityHooked) {
             monitorPlayerBuffering.visibilityHooked = true;
             document.addEventListener('visibilitychange', () => {
-                if (!document.hidden && !monitorPlayerBuffering.pendingTick) {
-                    monitorPlayerBuffering.pendingTick = true;
-                    setTimeout(() => { monitorPlayerBuffering.pendingTick = false; monitorPlayerBuffering(); }, 100);
+                if (!document.hidden) {
+                    clearTimeout(monitorPlayerBuffering.timeoutId);
+                    monitorPlayerBuffering.timeoutId = setTimeout(monitorPlayerBuffering, 100);
                 }
             });
         }
@@ -2380,7 +2377,7 @@ twitch-videoad.js text/javascript
         const shouldThrottle = typeof document !== 'undefined' && document.hidden && !document.pictureInPictureElement && !playerBufferState.inAdBreak;
         rescheduleDelay = shouldThrottle ? PlayerBufferingDelay * 3 : PlayerBufferingDelay;
         } finally {
-            setTimeout(monitorPlayerBuffering, rescheduleDelay);
+            monitorPlayerBuffering.timeoutId = setTimeout(monitorPlayerBuffering, rescheduleDelay);
         }
     }
     // Hide Twitch's ad break / Turbo promo / stream display ad overlays when we're already blocking ads
@@ -2608,6 +2605,14 @@ twitch-videoad.js text/javascript
             player.pause();
             playPlayer(player, 'pause/play fix');
             playerBufferState.weJustPaused = Date.now();
+            return;
+        }
+        if (isReload && document.pictureInPictureElement) {
+            // Replacing the player exits PiP. Leave deliberately paused playback alone.
+            if (wasPaused) return;
+            player.pause();
+            playPlayer(player, 'PiP recovery');
+            console.log('[AD DEBUG] Downgraded reload to pause/play to preserve PiP');
             return;
         }
         if (isReload) {
@@ -2937,13 +2942,17 @@ twitch-videoad.js text/javascript
         // Issue #255 hardening: the hidden side now has its own resume guard (see
         // scheduleBackgroundResume), and the focus-side resume is verified — a rejected play()
         // here used to strand the player paused ("still frozen when I come back").
-        let wasVideoPlaying = true;
+        let wasVideoPlaying = false;
         const focusResumeTimers = [];
         const visibilityChange = () => {
-            const videos = document.getElementsByTagName('video');
-            if (videos.length === 0) return;
+            const playerAndState = getPlayerAndState();
+            const video = playerAndState?.player?.getHTMLVideoElement?.();
+            if (!video || playerAndState?.state?.props?.content?.type !== 'live') {
+                wasVideoPlaying = false;
+                return;
+            }
             if (document.hidden) {
-                wasVideoPlaying = !videos[0].paused && !videos[0].ended;
+                wasVideoPlaying = !video.paused && !video.ended;
                 return;
             }
             // Back to visible: the hidden-side guard is done — reset its strike budget
@@ -2955,21 +2964,20 @@ twitch-videoad.js text/javascript
             if (!playerBufferState.hasStreamStarted) {
                 playerBufferState.hasStreamStarted = true;
             }
-            if (wasVideoPlaying && !videos[0].ended && videos[0].paused) {
-                // It was playing when the tab went away, so the pause isn't the user's — clear
-                // any misclassified intent before resuming
-                playerBufferState.userPauseIntent = false;
-                console.log('[AD DEBUG] Tab focused with the video paused — resuming (muted: ' + videos[0].muted + ')');
-                playPlayer(videos[0], 'tab focus');
+            if (wasVideoPlaying && !playerBufferState.userPauseIntent && !video.ended && video.paused) {
+                console.log('[AD DEBUG] Tab focused with the video paused; resuming (muted: ' + video.muted + ')');
+                playPlayer(video, 'tab focus');
                 for (const delay of [400, 1500]) {
                     focusResumeTimers.push(setTimeout(() => {
-                        const v = document.getElementsByTagName('video')[0];
-                        if (v && !document.hidden && v.paused && !v.ended && !playerBufferState.userPauseIntent) {
+                        const currentPlayer = getPlayerAndState();
+                        const v = currentPlayer?.player?.getHTMLVideoElement?.();
+                        if (v === video && currentPlayer?.state?.props?.content?.type === 'live' && !document.hidden && v.paused && !v.ended && !playerBufferState.userPauseIntent) {
                             playPlayer(v, 'tab-focus resume retry');
                         }
                     }, delay));
                 }
             }
+            wasVideoPlaying = false;
         };
         document.addEventListener('visibilitychange', visibilityChange);
         // Hooks for preserving volume / resolution

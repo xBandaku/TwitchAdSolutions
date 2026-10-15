@@ -580,5 +580,290 @@ assert(typeof attrsEmpty === 'object', 'returns object for empty string');
 // ============================================================
 // Results
 // ============================================================
-console.log('\n' + passed + ' passed, ' + failed + ' failed');
-process.exit(failed > 0 ? 1 : 0);
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+
+function scriptFunction(source, name) {
+    const declaration = new RegExp('    (?:async )?function ' + name + '\\(').exec(source);
+    if (!declaration) throw new Error('Missing script function: ' + name);
+    const end = source.indexOf('\n    }', declaration.index);
+    return source.slice(declaration.index, end + 6);
+}
+
+function playbackContext(source) {
+    const timers = new Map();
+    const listeners = new Map();
+    let nextTimer = 0;
+    const video = {
+        paused: false, ended: false, currentTime: 10, readyState: 2, plays: 0,
+        buffered: { length: 2, start: i => i === 0 ? 0 : 40 },
+        listeners: new Map(),
+        addEventListener(name, listener) { this.listeners.set(name, listener); },
+        play() { this.plays++; this.paused = false; return Promise.resolve(); }
+    };
+    const storage = new Map();
+    const context = vm.createContext({
+        console: { log() {}, error(message) { throw new Error(message); } },
+        Response, Headers, AbortController, ReadableStream, DOMException,
+        timers, listeners, video,
+        setTimeout(callback, delay) { timers.set(++nextTimer, { callback, delay }); return nextTimer; },
+        clearTimeout(id) { timers.delete(id); },
+        document: {
+            hidden: false, pictureInPictureElement: null,
+            getElementById: () => null,
+            addEventListener(name, listener) {
+                if (!listeners.has(name)) listeners.set(name, []);
+                listeners.get(name).push(listener);
+            }
+        },
+        localStorage: {
+            getItem: key => storage.get(key) ?? null,
+            setItem: (key, value) => storage.set(key, value)
+        },
+        maskAsNative: fn => fn,
+        backgroundResumeState: { chains: 0, loggedGiveUp: false },
+        clearBackgroundResumeTimers() {},
+        playPlayer: player => player.play(),
+        hideTwitchAdOverlays() {}, updateAdblockBanner() {},
+        isActivelyStrippingAds: false, playerForMonitoringBuffering: null
+    });
+    vm.runInContext(scriptFunction(source, 'declareOptions') + '; declareOptions(globalThis);', context);
+    const bufferState = /const playerBufferState = (\{[\s\S]*?\n    \});/.exec(source);
+    context.playerBufferState = bufferState ? vm.runInContext('(' + bufferState[1] + ')', context) : {};
+    context.DisablePostBreakWedge = true;
+    context.DisableInAdFreezeReload = true;
+    context.playerAndState = {
+        player: { core: {}, getHTMLVideoElement: () => video, isPaused: () => true, play: () => video.play() },
+        state: { props: { content: { type: 'live' } } }
+    };
+    context.getPlayerAndState = () => context.playerAndState;
+    return context;
+}
+
+async function testPlaybackRegressions() {
+    console.log('--- Playback regressions (script source) ---');
+    const scriptPaths = [
+        'vaft/vaft.user.js', 'vaft/vaft-ublock-origin.js',
+        'vaft/vaft_testing.user.js', 'vaft/vaft-testing-ublock-origin.js',
+        'video-swap-new/video-swap-new.user.js',
+        'video-swap-new/video-swap-new-ublock-origin.js',
+        'video-swap-new/video-swap-new-ublock-origin-testing.js'
+    ];
+    for (const scriptPath of scriptPaths) {
+        const source = fs.readFileSync(path.join(__dirname, '..', scriptPath), 'utf8');
+        const context = playbackContext(source);
+        const label = scriptPath + ': ';
+        vm.runInContext(scriptFunction(source, 'onContentLoaded') + '; onContentLoaded();', context);
+        const visibilityChange = context.listeners.get('visibilitychange')[0];
+        const hide = () => { context.document.hidden = true; visibilityChange(); };
+        const focus = () => { context.document.hidden = false; visibilityChange(); };
+        context.video.paused = true;
+        focus();
+        assertEq(context.video.plays, 0, label + 'initial visibility event preserves pause');
+        context.playerAndState.state.props.content.type = 'video';
+        context.video.paused = false;
+        hide();
+        context.video.paused = true;
+        focus();
+        assertEq(context.video.plays, 0, label + 'focus never resumes a VOD');
+        context.playerAndState.state.props.content.type = 'live';
+        hide();
+        focus();
+        assertEq(context.video.plays, 0, label + 'live stream paused before hiding stays paused');
+        context.video.paused = false;
+        hide();
+        context.video.paused = true;
+        focus();
+        assertEq(context.video.plays, 1, label + 'live playback resumes after background pause');
+        if (scriptPath.startsWith('vaft/')) {
+            context.video.paused = false;
+            hide();
+            context.video.paused = true;
+            context.playerBufferState.userPauseIntent = true;
+            focus();
+            assertEq(context.video.plays, 1, label + 'focus respects user pause intent');
+            context.playerBufferState.userPauseIntent = false;
+        }
+        context.video.paused = false;
+        hide();
+        context.playerAndState.state.props.content.type = 'video';
+        context.video.paused = true;
+        focus();
+        assertEq(context.video.plays, 1, label + 'switching to VOD cancels live resume intent');
+        context.playerAndState.state.props.content.type = 'live';
+        focus();
+        assertEq(context.video.plays, 1, label + 'stale focus does not resume a different stream');
+
+        if (!scriptPath.startsWith('vaft/')) continue;
+        const templateStart = source.indexOf('const newBlobStr = `') + 'const newBlobStr = '.length;
+        const workerTemplate = source.slice(templateStart, source.indexOf('`;', templateStart) + 1);
+        for (const match of workerTemplate.matchAll(/\$\{(\w+)\.toString\(\)\}/g)) {
+            vm.runInContext(scriptFunction(source, match[1]), context);
+        }
+        context.twitchBlobUrl = 'blob:https://www.twitch.tv/worker';
+        const workerSource = vm.runInContext(workerTemplate, context);
+        assert(new vm.Script(workerSource) instanceof vm.Script, label + 'serialized worker parses after interpolation');
+        const relayStart = source.indexOf('                            const responseData = e.data.value;');
+        const relayEnd = source.indexOf("\n                        } else if (e.data.key == 'TriggeredPlayerReload')", relayStart);
+        context.relay = vm.runInContext('(function(e) {' + source.slice(relayStart, relayEnd) + '\n})', context);
+        for (const status of [200, 204, 205, 304, 0, 101, 600]) {
+            let settled;
+            context.pendingFetchRequests = new Map([[1, {
+                resolve: response => { settled = { response }; },
+                reject: error => { settled = { error }; }
+            }]]);
+            context.relay({ data: { value: {
+                id: 1, status, body: status === 200 ? 'content' : '',
+                headers: { 'x-relay': 'preserved' }, url: 'https://example.com/token', type: 'cors', redirected: true
+            } } });
+            assertEq(context.pendingFetchRequests.size, 0, label + 'relay removes completed request ' + status);
+            if ([0, 101, 600].includes(status)) {
+                assertEq(settled?.error?.name, 'RangeError', label + 'invalid status rejects instead of hanging: ' + status);
+            } else {
+                assertEq(settled?.response?.status, status, label + 'relay reconstructs status ' + status);
+                assertEq(await settled.response.text(), status === 200 ? 'content' : '', label + 'relay preserves body semantics ' + status);
+                assertEq(settled.response.url, 'https://example.com/token', label + 'relay preserves response URL ' + status);
+                assertEq(settled.response.type, 'cors', label + 'relay preserves response type ' + status);
+                assertEq(settled.response.redirected, true, label + 'relay preserves redirect metadata ' + status);
+                assertEq(settled.response.headers.get('x-relay'), 'preserved', label + 'relay preserves headers ' + status);
+            }
+        }
+        context.handleWorkerFetchRequest = vm.runInContext('(' + scriptFunction(source, 'handleWorkerFetchRequest') + ')', context);
+        let bodyController;
+        context.window = { realFetch: async (url, options) => new Response(new ReadableStream({
+            start(controller) {
+                bodyController = controller;
+                options.signal.addEventListener('abort', () => controller.error(new DOMException('aborted', 'AbortError')));
+            }
+        })) };
+        context.timers.clear();
+        const pendingBody = context.handleWorkerFetchRequest({ id: 2, url: 'https://example.com/token' });
+        await Promise.resolve();
+        await Promise.resolve();
+        assertEq(context.timers.size, 1, label + 'abort timeout remains active while reading the body');
+        if (context.timers.size) context.timers.values().next().value.callback();
+        else bodyController.error(new DOMException('aborted', 'AbortError'));
+        assertEq((await pendingBody).error, 'GQL fetch timeout (5s)', label + 'stalled body read returns timeout error');
+        assertEq(context.timers.size, 0, label + 'failed body read clears timeout');
+
+        vm.runInContext(scriptFunction(source, 'parseAttributes') + '\n' + scriptFunction(source, 'notifyAdComplete'), context);
+        const batches = [];
+        context.gqlRequest = batch => { batches.push(batch); return Promise.resolve({ status: 200 }); };
+        const ad = (id, length) => '#EXT-X-DATERANGE:ID="stitched-ad-' + id + '",X-TV-TWITCH-AD-RADS-TOKEN="token"' + (length ? ',X-TV-TWITCH-AD-POD-LENGTH="' + length + '"' : '') + '\n';
+        const knownPod = { SpoofedAdIds: new Set() };
+        context.notifyAdComplete(ad('a', 2) + ad('b', 2) + ad('c', 2), knownPod);
+        assertEq(batches.length, 2, label + 'spoofing stops at the declared pod length');
+        assertEq(batches.flat().filter(packet => packet.variables.input.eventName === 'video_ad_pod_complete').length, 1, label + 'declared pod completes once');
+        batches.length = 0;
+        const unknownPod = { SpoofedAdIds: new Set() };
+        context.notifyAdComplete(ad('d'), unknownPod);
+        context.notifyAdComplete(ad('e'), unknownPod);
+        assertEq(batches.length, 2, label + 'unknown pod length does not skip later ads');
+        assertEq(batches.flat().filter(packet => packet.variables.input.eventName === 'video_ad_pod_complete').length, 0, label + 'unknown pod never reports completion');
+        batches.length = 0;
+        context.notifyAdComplete(ad('f'));
+        assertEq(batches.flat().filter(packet => packet.variables.input.eventName === 'video_ad_pod_complete').length, 0, label + 'missing dedup state cannot complete an unknown pod');
+
+        const monitorContext = playbackContext(source);
+        vm.runInContext(scriptFunction(source, 'monitorPlayerBuffering'), monitorContext);
+        const lookupError = new Error('player lookup failed');
+        monitorContext.getPlayerAndState = () => { throw lookupError; };
+        let tickError;
+        try { monitorContext.monitorPlayerBuffering(); } catch (error) { tickError = error; }
+        assertEq(tickError, lookupError, label + 'monitor exposes player lookup errors');
+        assertEq(monitorContext.timers.size, 1, label + 'monitor reschedules after player lookup errors');
+        monitorContext.getPlayerAndState = () => null;
+        monitorContext.monitorPlayerBuffering();
+        assertEq(monitorContext.timers.size, 1, label + 'manual monitor tick replaces the scheduled tick');
+        for (const listener of monitorContext.listeners.get('visibilitychange')) listener();
+        assertEq(monitorContext.timers.size, 1, label + 'focus wakeup leaves one monitor timer');
+        monitorContext.document.hidden = true;
+        monitorContext.monitorPlayerBuffering();
+        assertEq(monitorContext.timers.values().next().value.delay, monitorContext.PlayerBufferingDelay * 3, label + 'idle hidden tabs retain polling backoff');
+        monitorContext.playerBufferState.inAdBreak = true;
+        monitorContext.monitorPlayerBuffering();
+        assertEq(monitorContext.timers.values().next().value.delay, monitorContext.PlayerBufferingDelay, label + 'hidden ad breaks retain normal polling');
+
+        const pauseContext = playbackContext(source);
+        pauseContext.DisableBackgroundResume = true;
+        vm.runInContext(scriptFunction(source, 'onContentLoaded') + '; onContentLoaded();', pauseContext);
+        vm.runInContext(scriptFunction(source, 'monitorPlayerBuffering') + '; monitorPlayerBuffering();', pauseContext);
+        const pauseVisibilityChange = pauseContext.listeners.get('visibilitychange')[0];
+        pauseContext.document.hidden = true;
+        pauseVisibilityChange();
+        pauseContext.video.paused = true;
+        pauseContext.video.listeners.get('pause')();
+        pauseContext.document.hidden = false;
+        pauseVisibilityChange();
+        assertEq(pauseContext.video.plays, 1, label + 'hidden-tab pause event still allows live recovery on focus');
+        pauseContext.video.paused = true;
+        pauseContext.video.listeners.get('pause')();
+        pauseContext.document.hidden = true;
+        pauseVisibilityChange();
+        pauseContext.document.hidden = false;
+        pauseVisibilityChange();
+        assertEq(pauseContext.video.plays, 1, label + 'visible user pause event stays paused across focus changes');
+
+        if (scriptPath.includes('testing')) {
+            const pipContext = playbackContext(source);
+            pipContext.document.pictureInPictureElement = pipContext.video;
+            pipContext.iosSoftReload = false;
+            pipContext.playerAndState.player.isPaused = () => pipContext.video.paused;
+            pipContext.playerAndState.player.pause = () => { pipContext.video.paused = true; };
+            pipContext.playerAndState.state.setSrc = () => { throw new Error('PiP player must not be replaced'); };
+            vm.runInContext(scriptFunction(source, 'doTwitchPlayerTask'), pipContext);
+            pipContext.doTwitchPlayerTask(false, true, 'early');
+            assertEq(pipContext.video.plays, 1, label + 'PiP reload uses pause/play without replacing the player');
+            pipContext.video.paused = true;
+            pipContext.doTwitchPlayerTask(false, true, 'early');
+            assertEq(pipContext.video.plays, 1, label + 'PiP reload preserves a paused player');
+            continue;
+        }
+        const gapContext = playbackContext(source);
+        vm.runInContext(scriptFunction(source, 'monitorPlayerBuffering'), gapContext);
+        gapContext.playerBufferState.inAdBreak = true;
+        for (let tick = 0; tick < 3; tick++) gapContext.monitorPlayerBuffering();
+        assertEq(gapContext.video.currentTime, 10, label + 'buffer-gap seek waits for three frozen intervals');
+        gapContext.monitorPlayerBuffering();
+        assertEq(gapContext.video.currentTime, 40.05, label + 'frozen live stream seeks into the next buffered range');
+        gapContext.video.currentTime = 10;
+        gapContext.playerBufferState.userPauseIntent = true;
+        for (let tick = 0; tick < 4; tick++) gapContext.monitorPlayerBuffering();
+        assertEq(gapContext.video.currentTime, 10, label + 'buffer-gap recovery respects deliberate pause');
+        gapContext.playerBufferState.userPauseIntent = false;
+        gapContext.playerAndState.state.props.content.type = 'video';
+        for (let tick = 0; tick < 4; tick++) gapContext.monitorPlayerBuffering();
+        assertEq(gapContext.video.currentTime, 10, label + 'buffer-gap recovery never seeks VODs');
+        gapContext.playerAndState.state.props.content.type = 'live';
+        gapContext.video.paused = true;
+        for (let tick = 0; tick < 4; tick++) gapContext.monitorPlayerBuffering();
+        gapContext.video.paused = false;
+        gapContext.monitorPlayerBuffering();
+        assertEq(gapContext.playerBufferState.gapJumpStuckTicks, 0, label + 'paused ticks do not count as frozen playback');
+        for (let tick = 0; tick < 4; tick++) {
+            gapContext.video.currentTime++;
+            gapContext.monitorPlayerBuffering();
+        }
+        assertEq(gapContext.video.currentTime, 14, label + 'advancing playback is never gap-seeked');
+        gapContext.video.buffered.length = 1;
+        for (let tick = 0; tick < 4; tick++) gapContext.monitorPlayerBuffering();
+        assertEq(gapContext.video.currentTime, 14, label + 'a single buffered range cannot trigger a gap seek');
+        gapContext.video.buffered.length = 2;
+        gapContext.video.readyState = 3;
+        for (let tick = 0; tick < 4; tick++) gapContext.monitorPlayerBuffering();
+        assertEq(gapContext.video.currentTime, 14, label + 'a player with enough data is not gap-seeked');
+        gapContext.playerBufferState.inAdBreak = false;
+        gapContext.monitorPlayerBuffering();
+        assertEq(gapContext.playerBufferState.gapJumpStuckTicks, 0, label + 'ending a break clears frozen-gap evidence');
+
+    }
+}
+
+testPlaybackRegressions().then(() => {
+    console.log('\n' + passed + ' passed, ' + failed + ' failed');
+    process.exitCode = failed > 0 ? 1 : 0;
+}).catch(error => {
+    console.error(error);
+    process.exitCode = 1;
+});

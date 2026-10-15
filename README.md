@@ -1,6 +1,8 @@
-Originally forked from [pixeltris/TwitchAdSolutions](https://github.com/pixeltris/TwitchAdSolutions) (archived).
+Fork of [ryanbr/TwitchAdSolutions](https://github.com/ryanbr/TwitchAdSolutions), originally based on [pixeltris/TwitchAdSolutions](https://github.com/pixeltris/TwitchAdSolutions) (archived).
 
 # TwitchAdSolutions
+
+Install [vaft v68.5.8](https://github.com/xBandaku/TwitchAdSolutions/releases/download/v68.5.8/vaft.user.js) in Violentmonkey. See the [release notes](https://github.com/xBandaku/TwitchAdSolutions/releases/tag/v68.5.8) for the fixes and testing limits.
 
 This repo aims to provide multiple solutions for blocking Twitch ads.
 
@@ -27,10 +29,10 @@ Alternatively:
 
 **There are better / easier to use methods in the above recommendations.**
 
-- vaft - [userscript](https://github.com/ryanbr/TwitchAdSolutions/raw/master/vaft/vaft.user.js) / [ublock](https://raw.githubusercontent.com/ryanbr/TwitchAdSolutions/master/vaft/vaft-ublock-origin.js) / [ublock (permalink)](https://raw.githubusercontent.com/ryanbr/TwitchAdSolutions/0d6ef07f2df1b2d3614c3c479ed3453b79784514/vaft/vaft-ublock-origin.js)
+- vaft - [userscript](https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft.user.js) / [ublock](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/master/vaft/vaft-ublock-origin.js) / [ublock (permalink)](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/v68.5.8/vaft/vaft-ublock-origin.js)
   - Attempts to get a clean stream as fast as it can
   - If it fails to get a clean stream it removes ad segments (no playback until ad-free stream is found)
-- video-swap-new - [userscript](https://github.com/ryanbr/TwitchAdSolutions/raw/master/video-swap-new/video-swap-new.user.js) / [ublock](https://raw.githubusercontent.com/ryanbr/TwitchAdSolutions/master/video-swap-new/video-swap-new-ublock-origin.js) / [ublock (permalink)](https://raw.githubusercontent.com/ryanbr/TwitchAdSolutions/0d6ef07f2df1b2d3614c3c479ed3453b79784514/video-swap-new/video-swap-new-ublock-origin.js)
+- video-swap-new - [userscript](https://github.com/xBandaku/TwitchAdSolutions/raw/master/video-swap-new/video-swap-new.user.js) / [ublock](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/master/video-swap-new/video-swap-new-ublock-origin.js) / [ublock (permalink)](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/v68.5.8/video-swap-new/video-swap-new-ublock-origin.js)
   - Attempts to get a clean stream
   - If it fails to get a clean stream it removes ad segments (no playback until ad-free stream is found)
   - Not recommended, `vaft` is a better script
@@ -39,7 +41,7 @@ Alternatively:
 
 - Navigate to the uBlock Origin Dashboard (the extension options)
 - Under the `My filters` tab add `twitch.tv##+js(twitch-videoad)`.
-- Under the `Settings` tab, enable `I am an advanced user`, then click the cog that appears. Modify the value of `userResourcesLocation` from `unset` to the full url of the solution you wish to use (if a url is already in use, add a space after the existing url). e.g. `userResourcesLocation https://raw.githubusercontent.com/ryanbr/TwitchAdSolutions/master/vaft/vaft-ublock-origin.js` 
+- Under the `Settings` tab, enable `I am an advanced user`, then click the cog that appears. Modify the value of `userResourcesLocation` from `unset` to the full url of the solution you wish to use (if a url is already in use, add a space after the existing url). e.g. `userResourcesLocation https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/master/vaft/vaft-ublock-origin.js`
 - To ensure uBlock Origin loads the script I recommend that you disable/enable the uBlock Origin extension (or restart your browser).
 
 To stop using a script remove the filter and make the url `unset`.
