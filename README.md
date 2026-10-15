@@ -52,14 +52,14 @@ On browsers that require userscript permissions, enable them in the extension se
 3. Set `userResourcesLocation` to the stable vaft resource below and apply your changes:
 
    ```text
-   userResourcesLocation https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/v68.5.19/vaft/vaft-ublock-origin.js
+   userResourcesLocation https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/v68.5.22/vaft/vaft-ublock-origin.js
    ```
 
    If you already use custom resources, append this URL with a space between entries. See uBlock Origin's [advanced settings](https://github.com/gorhill/uBlock/wiki/Advanced-settings#userresourceslocation).
 
 4. Disable and re-enable uBlock Origin, or restart your browser, then reload Twitch.
 
-The versioned resource stays on v68.5.19 until you update its URL. To uninstall, remove the filter and this resource URL. Set `userResourcesLocation` back to `unset` only if no other custom resources remain.
+The versioned resource stays on v68.5.22 until you update its URL. To uninstall, remove the filter and this resource URL. Set `userResourcesLocation` back to `unset` only if no other custom resources remain.
 
 ## Scripts
 
@@ -67,8 +67,8 @@ The versioned resource stays on v68.5.19 until you update its URL. To uninstall,
 
 | Script | Userscript | uBlock Origin |
 | --- | --- | --- |
-| vaft | [Stable release](https://github.com/xBandaku/TwitchAdSolutions/releases/latest/download/vaft.user.js) / [master](https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft.user.js) | [v68.5.19](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/v68.5.19/vaft/vaft-ublock-origin.js) / [master](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/master/vaft/vaft-ublock-origin.js) |
-| video-swap-new | [master](https://github.com/xBandaku/TwitchAdSolutions/raw/master/video-swap-new/video-swap-new.user.js) | [v68.5.19](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/v68.5.19/video-swap-new/video-swap-new-ublock-origin.js) / [master](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/master/video-swap-new/video-swap-new-ublock-origin.js) |
+| vaft | [Stable release](https://github.com/xBandaku/TwitchAdSolutions/releases/latest/download/vaft.user.js) / [master](https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft.user.js) | [v68.5.22](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/v68.5.22/vaft/vaft-ublock-origin.js) / [master](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/master/vaft/vaft-ublock-origin.js) |
+| video-swap-new | [master](https://github.com/xBandaku/TwitchAdSolutions/raw/master/video-swap-new/video-swap-new.user.js) | [v68.5.22](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/v68.5.22/video-swap-new/video-swap-new-ublock-origin.js) / [master](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/master/video-swap-new/video-swap-new-ublock-origin.js) |
 
 `master` links follow the current branch and can include changes that have not been released. `video-swap-new` is an alternative backup-stream implementation; start with vaft.
 

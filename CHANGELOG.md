@@ -1,14 +1,29 @@
 ## Unreleased
 
-- Honor required post-ad buffer resets even when playback is moving near the live edge. Keep the health shortcut for optional reloads. This fixes a skipped cleanup path that could leave audio and video out of sync after backup playback.
+## v68.5.22 (2026-10-15)
 
-- Add browser recovery fixtures with native media playback and simulated Twitch player state. Cover failed reload mute rollback, user mute intent, replacement-player resume, overlapping reloads, pause and PiP cancellation.
+### Fixed
 
-- Run the full Node and browser suites before release publishing. Automatically build and verify the userscript, uBlock resource, ZIP bundle and checksums; normalize script line endings for consistent packages.
+- Honor required post-ad player resets even when playback is moving near the live edge. The previous health check could skip cleanup after backup playback or segment stripping and leave audio/video desync unresolved ([#26](https://github.com/xBandaku/TwitchAdSolutions/pull/26)).
+- Restore a temporary pre-mute when recovery fails or is cancelled. Preserve user mute changes and leave replacement videos alone ([#22](https://github.com/xBandaku/TwitchAdSolutions/pull/22)).
+- Upgrade an active soft recovery when a hard reset is requested. Keep one shared recovery promise and bounded retries, with one final hard attempt allowed after both soft attempts have started ([#23](https://github.com/xBandaku/TwitchAdSolutions/pull/23)).
 
-- Upgrade an active soft recovery when a hard reload is requested. Keep a shared promise and bounded retries, with one final upgrade attempt allowed if both soft attempts already started.
+### Tests and releases
 
-- Restore a temporary pre-mute when a reload fails or recovery is cancelled, while preserving user mute changes and leaving replacement videos alone.
+- Exercise recovery with native browser media and simulated Twitch player state. Cover failed reloads, mute intent, replacement-player resume, overlapping requests, pause and PiP cancellation, and required resets near the live edge ([#25](https://github.com/xBandaku/TwitchAdSolutions/pull/25), [#26](https://github.com/xBandaku/TwitchAdSolutions/pull/26)).
+- Run the full Node and browser suites before publishing. Build and verify the userscript, uBlock resource, ZIP bundle and SHA256 checksums. Normalize script line endings for consistent packages ([#24](https://github.com/xBandaku/TwitchAdSolutions/pull/24)).
+
+### Distribution
+
+- Stable vaft 68.5.22 (internal version 108) and testing vaft 692.0.0 (internal version 692), including their uBlock variants.
+- Update the README's versioned uBlock resources to v68.5.22.
+- Release downloads include the stable userscript, stable uBlock resource, a bundle of all 10 installable scripts, and SHA256SUMS.
+
+### Validation
+
+- Passed 393 runtime assertions, 104 Node tests, and 207 offline browser tests across Chromium, Firefox and WebKit.
+- GitHub checks passed on Node.js 22 and 24, Windows and Linux, including workflow lint and release checks.
+- The maintainer reported working live Twitch playback with v68.5.22 after reporting post-ad audio/video desync in v68.5.19. The automated fixtures verify recovery behavior; they do not measure perceptual audio/video alignment on live Twitch.
 
 ## v68.5.19 (2026-10-15)
 
