@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Coalesce overlapping reloads, reacquire the replacement player, verify playback advances, and retry at most twice with a 6-second limit per attempt. Stop on navigation, user pause, or PiP; preserve iOS soft reloads and settings changed during recovery. Adapted from Antidrew playback recovery.
+
 - Prefer backup video variants from the current codec family before matching resolution or frame rate. Port the testing selector into stable and normalize the first STREAM-INF attribute in testing. Fixes #12.
 
 - Evaluate post-ad cycle recovery using the freeze count captured before break cleanup. Prolonged freezes can no longer skip the recovery reload after the counter resets. Fixes #10.

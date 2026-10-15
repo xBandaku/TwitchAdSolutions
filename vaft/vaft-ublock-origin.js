@@ -37,7 +37,7 @@ twitch-videoad.js text/javascript
         }
     }
     'use strict';
-    const ourTwitchAdSolutionsVersion = 104;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 105;// Used to prevent conflicts with outdated versions of the scripts
     console.log('[AD DEBUG] TwitchAdSolutions vaft v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
         console.log('[AD DEBUG] CONFLICT: vaft v' + ourTwitchAdSolutionsVersion + ' skipped — another script already active (v' + window.twitchAdSolutionsVersion + '). Remove duplicate scripts.');
@@ -63,6 +63,8 @@ twitch-videoad.js text/javascript
         scope.TwitchAdUrlRewriteRegex = /(X-TV-TWITCH-AD(?:-[A-Z]+)*-URLS?=")[^"]*(")/g;
         scope.UriAttributeRegex = /URI="([^"]+)"/;
         scope.ClientID = 'kimne78kx3ncx6brgo4mv6wki5h1ko';
+        scope.PlayerRecoveryTimeout = 6000;
+        scope.PlayerRecoveryPollInterval = 150;
         scope.BackupRequestTimeout = 4000;
         scope.BackupSearchTimeout = 8000;
         scope.BackupRetryDelay = 3000;
@@ -733,7 +735,7 @@ twitch-videoad.js text/javascript
                     });
                 }
             }
-            return realFetch.apply(this, arguments);
+            return realFetch(input, options);
         };
     }
     async function fetchPlaylist(url, realFetch, timeout = BackupRequestTimeout, media = false) {
@@ -2592,6 +2594,11 @@ twitch-videoad.js text/javascript
     })();
     // Pause/play or fully reload the Twitch player, preserving quality/volume settings
     function doTwitchPlayerTask(isPausePlay, isReload, reloadKind) {
+        const active = doTwitchPlayerTask.recovery;
+        if (active) {
+            if (active.isCurrent()) return active.promise;
+            active.cancel();
+        }
         const playerAndState = getPlayerAndState();
         if (!playerAndState) {
             console.log('Could not find react root');
@@ -2607,9 +2614,9 @@ twitch-videoad.js text/javascript
             console.log('Could not find player state');
             return;
         }
+        if (playerState.props?.content?.type !== 'live' || playerBufferState.userPauseIntent) return;
         const wasPaused = player.isPaused() || player.core?.paused;
         if (wasPaused) {
-            // User deliberately paused — respect their intent, don't auto-resume
             if (playerBufferState.userPauseIntent) {
                 if (!playerBufferState.loggedPauseIntent) {
                     playerBufferState.loggedPauseIntent = true;
@@ -2617,7 +2624,6 @@ twitch-videoad.js text/javascript
                 }
                 return;
             }
-            // If WE recently called pause/play and player is still paused, retry play (stuck from autoplay policy or ad-state interference)
             if (playerBufferState.weJustPaused && (Date.now() - playerBufferState.weJustPaused) < 10000) {
                 try { player.play()?.catch?.(() => {}); } catch {}
             }
@@ -2635,15 +2641,12 @@ twitch-videoad.js text/javascript
             return;
         }
         if (isReload && document.pictureInPictureElement) {
-            // Downgrade to pause/play to preserve PiP — setSrc exits PiP
             player.pause();
             player.play()?.catch?.(() => {});
             console.log('[AD DEBUG] Downgraded reload to pause/play to preserve PiP');
             return;
         }
         if (isReload) {
-            // Skip reload if the player is already healthy — avoids disrupting smooth playback.
-            // But if we're way behind live edge (e.g. after a long ad break), proceed with reload to reset latency.
             const video = player.getHTMLVideoElement?.();
             if (video && video.readyState >= 3 && !video.paused && !video.ended) {
                 let latencySec = 0;
@@ -2653,8 +2656,6 @@ twitch-videoad.js text/javascript
                         const seekableEnd = video.seekable.end(video.seekable.length - 1);
                         if (Number.isFinite(seekableEnd)) {
                             const calc = Math.max(0, seekableEnd - video.currentTime);
-                            // Sanity cap: values >1h indicate garbage from the Media Source API
-                            // (seen right after a reload while the seekable range is in a transient state).
                             if (calc < 3600) {
                                 latencySec = calc;
                                 latencyKnown = true;
@@ -2674,195 +2675,168 @@ twitch-videoad.js text/javascript
             }
         }
         if (isReload) {
-            const lsKeyQuality = 'video-quality';
-            const lsKeyMuted = 'video-muted';
-            const lsKeyVolume = 'volume';
-            const lsKeyLowLatency = 'lowLatencyModeEnabled';// Preserve user's low-latency toggle across reloads (TTV-AB parity)
-            const lsKeyPersistence = 'persistenceEnabled';// Preserve autoplay/persistence toggle across reloads (TTV-AB parity)
-            let currentQualityLS = null;
-            let currentMutedLS = null;
-            let currentVolumeLS = null;
-            let currentLowLatencyLS = null;
-            let currentPersistenceLS = null;
+            const keys = ['video-quality', 'video-muted', 'volume', 'lowLatencyModeEnabled', 'persistenceEnabled'];
+            const snapshot = new Map();
+            let preserveSettings = true;
             try {
-                currentQualityLS = localStorage.getItem(lsKeyQuality);
-                currentMutedLS = localStorage.getItem(lsKeyMuted);
-                currentVolumeLS = localStorage.getItem(lsKeyVolume);
-                currentLowLatencyLS = localStorage.getItem(lsKeyLowLatency);
-                currentPersistenceLS = localStorage.getItem(lsKeyPersistence);
-                if (localStorageHookFailed && player?.core?.state) {
-                    localStorage.setItem(lsKeyMuted, JSON.stringify({default:player.core.state.muted}));
-                    localStorage.setItem(lsKeyVolume, player.core.state.volume);
-                }
-                if (player?.core?.state?.quality?.group) {
-                    localStorage.setItem(lsKeyQuality, JSON.stringify({default:player.core.state.quality.group}));
-                }
-            } catch {}
-            playerBufferState.lastReloadAt = Date.now();
-            playerBufferState.adStallStartAt = 0;// clear stale stall timer so post-reload readyState=0 isn't attributed to pre-reload stall
-            playerBufferState.userPauseIntent = false;
-            playerBufferState.loggedPauseIntent = false;
-            // playerForMonitoringBuffering re-acquired fresh every tick — no manual invalidation needed
-            // Hard reload for 'early' (mid-break escape — fresh session gets new ad-decision bucket).
-            // Soft reload for 'post-ad' (smooth transition, no black screen teardown).
-            // Apple touch devices: force soft — a new media instance needs a user tap to resume (black-screen + play icon).
+                for (const key of keys) snapshot.set(key, localStorage.getItem(key));
+            } catch (error) {
+                preserveSettings = false;
+                console.log('[AD DEBUG] Player settings unavailable during recovery: ' + error.message);
+            }
+            const route = window.location.href;
+            const request = { promise: null, cancelled: false };
+            let resolveRecovery, pollTimer, cleanupMute = () => {};
+            let attempt = 0, deadline = 0, observedVideo = null, initialTime = 0, playedVideo = null;
+            let settingsAfterReload;
             const hardReload = reloadKind === 'early' && !iosSoftReload;
-            // Decoupled from hardReload on purpose. The iOS downgrade below exists to keep the
-            // media element user-gesture-blessed, which only requires skipping the new media
-            // instance — not the token refresh. An 'early' reload after an autoplay commit
-            // depends on refreshAccessToken to leave the autoplay-scoped 360p variant ladder;
-            // without it an iOS user stays pinned at 360p, since 'early' is always downgraded
-            // here and 'post-ad' is soft by definition, so nothing refreshes the token again.
             const refreshToken = reloadKind === 'early';
-            if (reloadKind === 'early' && iosSoftReload) {
-                console.log('[AD DEBUG] iOS/iPadOS: downgrading hard reload to soft — keeps media element user-gesture-blessed (avoids black-screen + play-icon stall); access-token refresh is retained, so Source quality can still be restored. Opt-out: twitchAdSolutions_iosSoftReload=false');
-            }
-            console.log('[AD DEBUG] Reloading Twitch player' + (hardReload ? ' (hard)' : ' (soft)'));
-            // Pre-mute through hard reload to hide MSE-teardown audio click; restored on
-            // `canplay` with 1500ms safety cap. Skipped if user already muted.
-            if (hardReload) {
-                try {
-                    const v = getPlayerVideoElement();
-                    const wasInitiallyUnmuted = v && !v.muted;
-                    // Issue #200 fix: also set up restore+backstop when the element is already
-                    // muted IF vaft has successfully unmuted at any point earlier this session.
-                    // Strong signal of Twitch's silent re-mute pattern rather than user-initiated
-                    // mute. First-session-mute users have vaftEverUnmuted=false → backstop never
-                    // engages → mute respected. Disabled by twitchAdSolutions_recoverFromSilentMute=
-                    // false for users who deliberately mute mid-session.
-                    const shouldRecover = playerBufferState.vaftEverUnmuted && RecoverFromSilentMute;
-                    if (v && (wasInitiallyUnmuted || shouldRecover)) {
-                        if (wasInitiallyUnmuted) {
-                            v.muted = true;
-                        }
-                        // Multi-event restore: Edge fires loadeddata/playing independently of
-                        // canplay; first-fired wins via the idempotent `done` guard.
-                        let done = false;
-                        const restore = () => {
-                            if (done) return;
-                            done = true;
-                            document.removeEventListener('canplay', listener, true);
-                            document.removeEventListener('playing', listener, true);
-                            document.removeEventListener('loadeddata', listener, true);
-                            try {
-                                const cur = getPlayerVideoElement();
-                                if (cur) {
-                                    cur.muted = false;
-                                    playerBufferState.vaftEverUnmuted = true;
-                                }
-                                // Undo OUR pre-mute if it landed on a different element than `cur`.
-                                // `cur` is whichever <video> is first in the DOM — not necessarily the one
-                                // we muted, now that Twitch renders extra <video> elements for side/chat
-                                // ads (#249), and Firefox's PiP is browser-native so the
-                                // document.pictureInPictureElement reload guard never fires there (#248).
-                                // Gated on wasInitiallyUnmuted so it only ever clears a mute we set —
-                                // it can never unmute an ad video. No-op on a normal hard reload, where
-                                // the old element is disconnected.
-                                if (v && v !== cur && v.isConnected && v.muted && wasInitiallyUnmuted) {
-                                    v.muted = false;
-                                    console.log('[AD DEBUG] Restore — cleared leaked pre-mute on the original element (cur resolved to a different <video>) — issue #248');
-                                }
-                            } catch {}
-                        };
-                        const listener = (e) => {
-                            if (e.target && e.target.tagName === 'VIDEO') restore();
-                        };
-                        document.addEventListener('canplay', listener, true);
-                        document.addEventListener('playing', listener, true);
-                        document.addEventListener('loadeddata', listener, true);
-                        setTimeout(restore, 4000);
-                        // Backstop: re-check at 5500ms. Twitch's LS-restore at ~3000ms can
-                        // re-mute post-restore if it captured a muted snapshot. Idempotent.
-                        setTimeout(() => {
-                            try {
-                                const cur = getPlayerVideoElement();
-                                if (cur && cur.muted) {
-                                    if (playerBufferState.userPauseIntent) {
-                                        console.log('[AD DEBUG] Hard reload backstop SKIPPED — element muted at 5500ms but userPauseIntent set (likely false-positive pause event during MSE teardown — issue #200 follow-up)');
-                                    } else {
-                                        cur.muted = false;
-                                        playerBufferState.vaftEverUnmuted = true;
-                                        console.log('[AD DEBUG] Hard reload backstop unmute fired — element was still muted at 5500ms (initial: ' + (wasInitiallyUnmuted ? 'unmuted, we pre-muted' : 'already-muted on entry — recovering from silent Twitch re-mute') + ')');
-                                    }
-                                }
-                                // Same leaked-pre-mute catch as in restore(), at the backstop — see #248.
-                                if (v && v !== cur && v.isConnected && v.muted && wasInitiallyUnmuted
-                                    && !playerBufferState.userPauseIntent) {
-                                    v.muted = false;
-                                    console.log('[AD DEBUG] Backstop — cleared leaked pre-mute on the original element (cur resolved to a different <video>) — issue #248');
-                                }
-                            } catch {}
-                        }, 5500);
+            const isCurrent = () => {
+                const current = getPlayerAndState();
+                return doTwitchPlayerTask.latestRecovery === request && !request.cancelled
+                    && window.location.href === route && !playerBufferState.userPauseIntent
+                    && (!current?.state?.props?.content?.type || current.state.props.content.type === 'live');
+            };
+            const finish = success => {
+                clearTimeout(pollTimer);
+                if (!success) {
+                    request.cancelled = true;
+                    cleanupMute();
+                }
+                if (doTwitchPlayerTask.recovery === request) doTwitchPlayerTask.recovery = null;
+                resolveRecovery(success);
+            };
+            request.isCurrent = isCurrent;
+            request.cancel = () => finish(false);
+            request.promise = new Promise(resolve => { resolveRecovery = resolve; });
+            doTwitchPlayerTask.recovery = request;
+            doTwitchPlayerTask.latestRecovery = request;
+            const muteWasChanged = () => preserveSettings && localStorage.getItem('video-muted') !== settingsAfterReload.get('video-muted');
+            const restoreMute = () => {
+                if (!isCurrent() || muteWasChanged() || snapshot.get('video-muted')?.includes('"default":true')) return;
+                const current = getPlayerAndState()?.player?.getHTMLVideoElement?.();
+                if (current) {
+                    current.muted = false;
+                    playerBufferState.vaftEverUnmuted = true;
+                }
+            };
+            const poll = () => {
+                if (!isCurrent() || document.pictureInPictureElement) { finish(false); return; }
+                const current = getPlayerAndState();
+                const video = current?.player?.getHTMLVideoElement?.();
+                if (video && !video.ended && video.readyState >= 2) {
+                    if (video !== observedVideo) {
+                        observedVideo = video;
+                        initialTime = video.currentTime;
                     }
-                } catch {}
-            }
-            // Set weJustPaused so the pause-listener filters out the MSE-teardown
-            // pause event Twitch dispatches on the old <video> during setSrc.
-            // Without this, userPauseIntent would falsely flip to true during the
-            // reload window, blocking the 5500ms backstop's unmute on stuck-muted
-            // recovery (issue #200 follow-up).
-            // refreshToken as well as hardReload: a token refresh swaps the source even when
-            // the media instance is reused (the iOS downgrade), so Twitch can still dispatch
-            // the teardown pause. Unarmed, that reads as userPauseIntent and suppresses the
-            // unmute backstop — muted stream on exactly the devices this path targets.
-            if (hardReload || refreshToken) {
+                    if (playedVideo === video && video.paused && current.player.core?.paused) { finish(false); return; }
+                    if (playedVideo !== video) {
+                        playedVideo = video;
+                        try {
+                            current.player.play()?.catch?.(error => console.log('[AD DEBUG] Recovery play rejected: ' + error.message));
+                        } catch (error) {
+                            console.log('[AD DEBUG] Recovery play failed: ' + error.message);
+                        }
+                    }
+                    if (!video.paused && video.currentTime > initialTime + 0.1) { finish(true); return; }
+                }
+                if (Date.now() >= deadline) {
+                    if (attempt >= 2) {
+                        console.log('[AD DEBUG] Player recovery stopped after two attempts');
+                        finish(false);
+                        return;
+                    }
+                    reload();
+                    return;
+                }
+                pollTimer = setTimeout(poll, PlayerRecoveryPollInterval);
+            };
+            const reload = () => {
+                if (!isCurrent() || document.pictureInPictureElement) { finish(false); return; }
+                const current = getPlayerAndState();
+                if (!current?.state?.setSrc) {
+                    console.log('[AD DEBUG] Player recovery stopped: replacement player unavailable');
+                    finish(false);
+                    return;
+                }
+                attempt++;
+                deadline = Date.now() + PlayerRecoveryTimeout;
+                observedVideo = null;
+                playedVideo = null;
+                playerBufferState.lastReloadAt = Date.now();
+                playerBufferState.adStallStartAt = 0;
                 playerBufferState.weJustPaused = Date.now();
+                playerForMonitoringBuffering = null;
+                console.log('[AD DEBUG] Reloading Twitch player (' + (hardReload ? 'hard' : 'soft') + ', attempt ' + attempt + '/2)');
+                try {
+                    current.state.setSrc({ isNewMediaPlayerInstance: hardReload, refreshAccessToken: refreshToken });
+                } catch (error) {
+                    console.log('[AD DEBUG] Player reload failed: ' + error.message);
+                    finish(false);
+                    return;
+                }
+                postTwitchWorkerMessage('TriggeredPlayerReload');
+                pollTimer = setTimeout(poll, PlayerRecoveryPollInterval);
+            };
+            try {
+                if (preserveSettings && localStorageHookFailed && player.core?.state) {
+                    localStorage.setItem('video-muted', JSON.stringify({ default: player.core.state.muted }));
+                    localStorage.setItem('volume', player.core.state.volume);
+                }
+                if (preserveSettings && player.core?.state?.quality?.group) {
+                    localStorage.setItem('video-quality', JSON.stringify({ default: player.core.state.quality.group }));
+                }
+                settingsAfterReload = preserveSettings ? new Map(keys.map(key => [key, localStorage.getItem(key)])) : new Map();
+            } catch (error) {
+                preserveSettings = false;
+                console.log('[AD DEBUG] Could not preserve player settings: ' + error.message);
             }
-            playerState.setSrc({ isNewMediaPlayerInstance: hardReload, refreshAccessToken: refreshToken });
-            postTwitchWorkerMessage('TriggeredPlayerReload');
-            player.play()?.catch?.(() => {});
-            // Always restore muted/volume state after reload — Chrome autoplay policy can force muted.
-            // Block must always run: if Twitch hasn't written LS values yet (fresh session, private mode,
-            // cleared cache), the video still needs unmute after Chrome's autoplay mute on reload.
-            {
-                setTimeout(() => {
-                    try {
-                        if (currentQualityLS) {
-                            localStorage.setItem(lsKeyQuality, currentQualityLS);
+            if (hardReload) {
+                const video = player.getHTMLVideoElement?.();
+                const shouldRecover = playerBufferState.vaftEverUnmuted && RecoverFromSilentMute;
+                if (video && (!video.muted || shouldRecover) && !snapshot.get('video-muted')?.includes('"default":true')) {
+                    video.muted = true;
+                    const listener = event => {
+                        if (event.target === getPlayerAndState()?.player?.getHTMLVideoElement?.()) {
+                            restoreMute();
+                            cleanupMute();
                         }
-                        if (currentMutedLS) {
-                            localStorage.setItem(lsKeyMuted, currentMutedLS);
-                        }
-                        if (currentVolumeLS) {
-                            localStorage.setItem(lsKeyVolume, currentVolumeLS);
-                        }
-                        if (currentLowLatencyLS !== null) {
-                            localStorage.setItem(lsKeyLowLatency, currentLowLatencyLS);
-                        }
-                        if (currentPersistenceLS !== null) {
-                            localStorage.setItem(lsKeyPersistence, currentPersistenceLS);
-                        }
-                        // The replaced element can remain beside separate ad videos.
-                        const current = getPlayerAndState();
-                        const video = current?.player?.getHTMLVideoElement?.();
-                        if (!video || current.state?.props?.content?.type !== 'live') return;
-                        // Respect user's mute intent: only force-unmute if LS didn't say mute.
-                        // Twitch writes video-muted as '{"default":true}' when user muted via UI;
-                        // Chrome autoplay policy can mute even if user didn't (no LS signal).
-                        const userIntendedMute = currentMutedLS && currentMutedLS.includes('"default":true');
-                        if (video.muted && !userIntendedMute) {
-                            video.muted = false;
-                        }
-                        // Correct live drift after reload.
-                        // For hard reload with large drift (>5s), hard-seek to live edge to flush
-                        // any A/V timestamp desync from strip+BLANK_MP4+recovery activity. Drift
-                        // correction at 1.1x would take minutes to catch up 30-60s of drift.
-                        // For soft reload or small drift, use existing gradual catch-up.
-                        if (video.buffered.length > 0 && video.readyState >= 3) {
-                            const liveEdge = video.buffered.end(video.buffered.length - 1);
-                            const drift = liveEdge - video.currentTime;
-                            if (hardReload && drift > 5 && Number.isFinite(liveEdge) && liveEdge < 3600) {
-                                console.log('[AD DEBUG] Post-hard-reload seek to live — ' + drift.toFixed(1) + 's behind, jumping to live edge to flush A/V drift');
-                                video.currentTime = liveEdge;
-                            } else if (drift > 2) {
-                                console.log('[AD DEBUG] Post-reload live drift correction: ' + drift.toFixed(1) + 's behind');
-                                startDriftCorrection(video);
-                            }
-                        }
-                    } catch {}
-                }, 3000);
+                    };
+                    cleanupMute = () => {
+                        for (const name of ['canplay', 'playing', 'loadeddata']) document.removeEventListener(name, listener, true);
+                    };
+                    for (const name of ['canplay', 'playing', 'loadeddata']) document.addEventListener(name, listener, true);
+                    setTimeout(() => { restoreMute(); cleanupMute(); }, 4000);
+                    setTimeout(restoreMute, 5500);
+                }
             }
-            return;
+            reload();
+            setTimeout(() => {
+                if (!isCurrent()) return;
+                try {
+                    for (const [key, value] of preserveSettings ? snapshot : []) {
+                        if (value !== null && localStorage.getItem(key) === settingsAfterReload.get(key)) {
+                            localStorage.setItem(key, value);
+                            settingsAfterReload.set(key, value);
+                        }
+                    }
+                } catch (error) {
+                    preserveSettings = false;
+                    console.log('[AD DEBUG] Could not restore player settings: ' + error.message);
+                }
+                restoreMute();
+                const video = getPlayerAndState()?.player?.getHTMLVideoElement?.();
+                if (video?.buffered.length > 0 && video.readyState >= 3) {
+                    const liveEdge = video.buffered.end(video.buffered.length - 1);
+                    const drift = liveEdge - video.currentTime;
+                    if (hardReload && drift > 5 && Number.isFinite(liveEdge) && liveEdge < 3600) {
+                        video.currentTime = liveEdge;
+                    } else if (drift > 2) {
+                        startDriftCorrection(video);
+                    }
+                }
+            }, 3000);
+            return request.promise;
         }
     }
     window.reloadTwitchPlayer = () => {

@@ -17,7 +17,9 @@ async function boot(page, context, file, url = 'https://www.twitch.tv/fixture-ch
             await route.continue();
         } else if (request.isNavigationRequest() && parsed.href === url) {
             await route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><body><div id="root"><div class="video-player"><video></video></div></div></body></html>' });
-        } else if (parsed.pathname === '/fixtures/clean.m3u8') {
+        } else if (parsed.pathname === '/api/v2/channel/hls/fixture-channel.m3u8') {
+            await route.fulfill({ contentType: 'application/vnd.apple.mpegurl', body: '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1280x720,FRAME-RATE=60,CODECS="avc1.4d4028"\n/fixtures/chunked?token=fixture\n#EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=1920x1080,FRAME-RATE=60,CODECS="avc1.4d4028"\n/fixtures/clean.m3u8?token=fixture\n' });
+        } else if (['/fixtures/clean.m3u8', '/fixtures/chunked'].includes(parsed.pathname)) {
             await route.fulfill({ contentType: 'application/vnd.apple.mpegurl', body: cleanPlaylist });
         } else if (parsed.pathname.startsWith('/fixtures/passthrough')) {
             await route.fulfill({ status: 207, contentType: 'application/json', headers: { 'x-fixture': 'preserved' }, body: '{"fixture":"passthrough"}' });
@@ -68,6 +70,48 @@ test.afterEach(async ({ page }, testInfo) => {
 });
 
 for (const script of scripts) {
+    if (script.file.startsWith('vaft/vaft')) {
+        test(script.file + ' handles optional GQL headers and v2 worker playlist failures', async ({ page, context }) => {
+            await boot(page, context, script.file);
+            const result = await page.evaluate(async () => {
+                for (const input of ['https://gql.twitch.tv/gql', new URL('https://gql.twitch.tv/gql'), new Request('https://gql.twitch.tv/gql')]) {
+                    await fetch(input);
+                }
+                const source = `
+                    (async () => {
+                        try {
+                            const base = 'https://www.twitch.tv';
+                            await fetch(base + '/api/v2/channel/hls/fixture-channel.m3u8?token=fixture');
+                            const stream = StreamInfos['fixture-channel'];
+                            processStreamPlaylist = async (url, text) => text + '#fixture-processed';
+                            const media = await (await fetch(new Request(stream.ResolutionList[0].Url))).text();
+                            const query = await (await fetch(new URL(base + '/fixtures/clean.m3u8?token=fixture'))).text();
+                            const readText = Response.prototype.text;
+                            let rejected = false;
+                            Response.prototype.text = async function() { throw new Error('fixture body rejected'); };
+                            try { await fetch(base + '/fixtures/clean.m3u8?failure=fixture'); }
+                            catch (error) { rejected = error.message === 'fixture body rejected'; }
+                            finally { Response.prototype.text = readText; }
+                            self.postMessage({ fixture: true, media, query, rejected, resolutions: stream.ResolutionList.length });
+                        } catch (error) { self.postMessage({ fixture: true, error: error.message }); }
+                    })();
+                `;
+                const worker = new Worker(URL.createObjectURL(new Blob([source], { type: 'text/javascript' })));
+                try {
+                    return await new Promise((resolve, reject) => {
+                        worker.addEventListener('message', event => { if (event.data.fixture) resolve(event.data); });
+                        worker.addEventListener('error', event => reject(new Error(event.message)), { once: true });
+                    });
+                } finally { worker.terminate(); }
+            });
+            expect(result.error).toBeUndefined();
+            expect(result.resolutions).toBe(2);
+            expect(result.media).toContain('#fixture-processed');
+            expect(result.query).toContain('#fixture-processed');
+            expect(result.rejected).toBe(true);
+        });
+    }
+
     test(script.file + ' boots once and preserves ordinary fetch and reused XHR', async ({ page, context }) => {
         await boot(page, context, script.file);
         const result = await page.evaluate(async source => {
