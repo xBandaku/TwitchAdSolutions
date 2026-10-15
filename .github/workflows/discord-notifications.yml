@@ -1,0 +1,27 @@
+name: Discord Notifications
+on:
+  push:
+  pull_request:
+    types: [opened, reopened, synchronize, closed, ready_for_review]
+  issues:
+    types: [opened, reopened, closed]
+  release:
+    types: [published]
+permissions:
+  contents: read
+jobs:
+  notify:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out notification script
+        uses: actions/checkout@v4
+      - name: Send Discord embed
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_ACTION: ${{ github.event.action }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: python3 .github/scripts/discord_notify.py
