@@ -476,6 +476,7 @@ function playbackContext(source) {
     const context = vm.createContext({
         console: { log() {}, error(message) { throw new Error(message); } },
         Response, Headers, AbortController, ReadableStream, DOMException,
+        window: { location: { href: 'https://www.twitch.tv/fixture' } },
         timers, listeners, video,
         setTimeout(callback, delay) { timers.set(++nextTimer, { callback, delay }); return nextTimer; },
         clearTimeout(id) { timers.delete(id); },
@@ -536,6 +537,7 @@ function testReloadVideoTarget(source, label) {
     assertEq(driftTargets[0], newVideo, label + 'reload drift correction targets the current player video');
 
     context.localStorage.setItem('video-muted', '{"default":true}');
+    context.doTwitchPlayerTask.recovery?.cancel();
     context.playerAndState.player = { core: {}, isPaused: () => false, getHTMLVideoElement: () => oldVideo, play: () => Promise.resolve() };
     context.doTwitchPlayerTask(false, true, 'post-ad');
     const mutedRestore = [...context.timers.values()].filter(timer => timer.delay === 3000).at(-1).callback;

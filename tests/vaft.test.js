@@ -32,7 +32,164 @@ function harness(file, bindings = {}) {
     return { context, messages };
 }
 
+function recoveryHarness(file) {
+    let now = 100000, timerId = 0;
+    const timers = new Map(), storage = new Map(), reloads = [], listeners = new Map();
+    const window = { location: { href: 'https://www.twitch.tv/fixture' } };
+    const { context } = harness(file, {
+        window, Date: class extends Date { static now() { return now; } },
+        setTimeout(callback, delay) { timers.set(++timerId, { callback, at: now + delay }); return timerId; },
+        clearTimeout(id) { timers.delete(id); },
+        localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
+        document: {
+            pictureInPictureElement: null,
+            addEventListener(name, listener) { listeners.set(name, listener); },
+            removeEventListener(name) { listeners.delete(name); }
+        },
+        playerBufferState: { userPauseIntent: false }, localStorageHookFailed: false,
+        iosSoftReload: false, playerForMonitoringBuffering: null
+    });
+    const makePlayer = () => {
+        const video = { currentTime: 10, readyState: 2, muted: true, paused: false, ended: false, buffered: { length: 0 } };
+        return { video, core: {}, plays: 0, getHTMLVideoElement: () => video, isPaused: () => video.paused,
+            pause() { video.paused = true; }, play() { this.plays++; video.paused = false; return Promise.resolve(); } };
+    };
+    const current = { player: makePlayer(), state: { props: { content: { type: 'live' } }, setSrc: options => reloads.push(options) } };
+    context.getPlayerAndState = () => current;
+    context.postTwitchWorkerMessage = () => {};
+    context.startDriftCorrection = () => {};
+    function advance(ms) {
+        const until = now + ms;
+        while (true) {
+            const next = [...timers].filter(([, timer]) => timer.at <= until).sort((a, b) => a[1].at - b[1].at)[0];
+            if (!next) break;
+            now = next[1].at;
+            timers.delete(next[0]);
+            next[1].callback();
+        }
+        now = until;
+    }
+    return { context, current, makePlayer, advance, storage, reloads, window, listeners };
+}
+
 for (const file of files) {
+    test(file + ' forwards ordinary worker Request inputs without losing options', async () => {
+        const calls = [];
+        const { context } = harness(file, { fetch: async (...args) => { calls.push(args); return new Response('{}'); } });
+        context.hookWorkerFetch();
+        const request = new Request('https://fixture.invalid/passthrough', { method: 'POST', headers: { 'X-Fixture': 'kept' }, body: '{}' });
+        await context.fetch(request);
+        assert.equal(calls[0][0], request);
+        assert.equal(calls[0][0].headers.get('X-Fixture'), 'kept');
+        assert.equal(request.bodyUsed, false);
+    });
+
+    test(file + ' ignores a master response superseded by another channel', async () => {
+        const pending = new Map();
+        const { context } = harness(file, { fetch: input => new Promise(resolve => pending.set(String(input), resolve)) });
+        context.hookWorkerFetch();
+        const master = '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1280x720,CODECS="avc1.4d4028"\nhttps://fixture.invalid/variant\n';
+        const firstUrl = 'https://usher.ttvnw.net/api/channel/hls/first.m3u8?token=fixture';
+        const secondUrl = 'https://usher.ttvnw.net/api/channel/hls/second.m3u8?token=fixture';
+        const first = context.fetch(firstUrl), second = context.fetch(secondUrl);
+        pending.get(secondUrl)(new Response(master));
+        await second;
+        pending.get(firstUrl)(new Response(master));
+        await first;
+        assert.equal(context.ActiveStreamInfo.ChannelName, 'second');
+        assert.equal(context.StreamInfos.first, undefined);
+        assert.equal(context.StreamInfosByUrl['https://fixture.invalid/variant'].ChannelName, 'second');
+    });
+
+    test(file + ' expires a token relay when the main thread never responds', async () => {
+        const timers = new Map();
+        let id = 0;
+        const { context, messages } = harness(file, {
+            setTimeout(callback, delay) { timers.set(++id, { callback, delay }); return id; },
+            clearTimeout(timer) { timers.delete(timer); }, pendingFetchRequests: new Map()
+        });
+        const pending = context.getAccessToken('fixture', 'popout', 1750);
+        assert.equal(messages[0].value.timeout, 1750);
+        const timer = [...timers.values()][0];
+        assert.equal(timer.delay, 1750);
+        timer.callback();
+        await assert.rejects(pending, /timed out/);
+        assert.equal(context.pendingFetchRequests.size, 0);
+    });
+
+    test(file + ' recovers playback when localStorage is unavailable', async () => {
+        const h = recoveryHarness(file);
+        h.context.localStorage.getItem = () => { throw new Error('storage blocked'); };
+        const pending = h.context.doTwitchPlayerTask(false, true, 'early');
+        h.advance(150);
+        h.current.player.video.currentTime++;
+        h.advance(150);
+        assert.equal(await pending, true);
+        h.advance(5500);
+        assert.equal(h.reloads.length, 1);
+    });
+
+    test(file + ' coalesces reloads and resumes the replacement player', async () => {
+        const { context, current, makePlayer, advance, reloads } = recoveryHarness(file);
+        const oldPlayer = current.player;
+        const result = context.doTwitchPlayerTask(false, true, 'early');
+        assert.equal(context.doTwitchPlayerTask(false, true, 'early'), result);
+        const replacement = makePlayer();
+        replacement.video.paused = true;
+        current.player = replacement;
+        advance(150);
+        assert.equal(oldPlayer.plays, 0);
+        assert.equal(replacement.plays, 1);
+        replacement.video.currentTime += 1;
+        advance(150);
+        assert.equal(await result, true);
+        assert.equal(reloads.length, 1);
+        assert.equal(context.doTwitchPlayerTask.recovery, null);
+    });
+
+    test(file + ' bounds player recovery and stops for navigation, pause and PiP', async () => {
+        const stalled = recoveryHarness(file);
+        const result = stalled.context.doTwitchPlayerTask(false, true, 'early');
+        stalled.advance(13000);
+        assert.equal(await result, false);
+        assert.equal(stalled.reloads.length, 2);
+        for (const reason of ['channel', 'vod', 'pause', 'pip']) {
+            const h = recoveryHarness(file);
+            const pending = h.context.doTwitchPlayerTask(false, true, 'early');
+            if (reason === 'channel') h.window.location.href = 'https://www.twitch.tv/another';
+            if (reason === 'vod') h.current.state.props.content.type = 'video';
+            if (reason === 'pause') h.context.playerBufferState.userPauseIntent = true;
+            if (reason === 'pip') h.context.document.pictureInPictureElement = {};
+            h.advance(13000);
+            assert.equal(await pending, false);
+            assert.equal(h.reloads.length, 1);
+            assert.equal(h.current.player.plays, 0);
+        }
+        const ios = recoveryHarness(file);
+        ios.context.iosSoftReload = true;
+        ios.context.doTwitchPlayerTask(false, true, 'early');
+        assert.equal(ios.reloads[0].isNewMediaPlayerInstance, false);
+        assert.equal(ios.reloads[0].refreshAccessToken, true);
+        ios.context.doTwitchPlayerTask.recovery.cancel();
+    });
+
+    test(file + ' preserves mute and settings changes made during recovery', async () => {
+        const h = recoveryHarness(file);
+        h.current.player.video.muted = false;
+        h.storage.set('volume', '0.8');
+        h.storage.set('video-muted', '{"default":false}');
+        h.context.doTwitchPlayerTask(false, true, 'early');
+        const replacement = h.makePlayer();
+        h.current.player = replacement;
+        h.storage.set('volume', '0.2');
+        h.storage.set('video-muted', '{"default":true}');
+        h.advance(5500);
+        assert.equal(h.storage.get('volume'), '0.2');
+        assert.equal(h.storage.get('video-muted'), '{"default":true}');
+        assert.equal(replacement.video.muted, true);
+        h.context.doTwitchPlayerTask.recovery.cancel();
+    });
+
     test(file + ' ranks backup codec compatibility ahead of resolution', () => {
         const { context } = harness(file);
         const variant = (codec, resolution, name) => '#EXT-X-STREAM-INF:' + (codec ? 'CODECS="' + codec + '",' : '') + 'RESOLUTION=' + resolution + ',FRAME-RATE=60,BANDWIDTH=3000000\nhttps://fixture.invalid/' + name + '\n';
