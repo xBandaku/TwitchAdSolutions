@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Reacquire the current player-owned video for delayed post-reload unmute and drift correction. Keep separate ad videos muted, leave replaced elements alone, and skip live recovery after VOD navigation or player unmount. Applies to vaft 68.5.9 and vaft testing 680.0.0, including their uBlock variants.
+
 ## v68.5.8 (2026-10-15)
 
 ### Fixed

@@ -641,6 +641,49 @@ function playbackContext(source) {
     return context;
 }
 
+function testReloadVideoTarget(source, label) {
+    const context = playbackContext(source);
+    const oldVideo = context.video;
+    const adVideo = { muted: true, dataset: { tasAdHidden: '1' }, readyState: 4, currentTime: 5, buffered: { length: 1, end: () => 30 } };
+    const newVideo = { muted: true, readyState: 4, currentTime: 10, buffered: { length: 1, end: () => 20 } };
+    const driftTargets = [];
+    oldVideo.muted = true;
+    context.document.getElementsByTagName = () => [adVideo, oldVideo, newVideo];
+    context.iosSoftReload = false;
+    context.localStorageHookFailed = false;
+    context.playerAndState.player.isPaused = () => false;
+    context.playerAndState.state.setSrc = () => {};
+    context.postTwitchWorkerMessage = () => {};
+    context.startDriftCorrection = video => driftTargets.push(video);
+    vm.runInContext(scriptFunction(source, 'doTwitchPlayerTask'), context);
+    context.doTwitchPlayerTask(false, true, 'post-ad');
+    const restore = [...context.timers.values()].find(timer => timer.delay === 3000).callback;
+    context.playerAndState.player = { getHTMLVideoElement: () => newVideo };
+    restore();
+    assertEq(adVideo.muted, true, label + 'reload recovery keeps a separate ad muted');
+    assertEq(oldVideo.muted, true, label + 'reload recovery leaves the replaced video alone');
+    assertEq(newVideo.muted, false, label + 'reload recovery unmutes the current player video');
+    assertEq(driftTargets[0], newVideo, label + 'reload drift correction targets the current player video');
+
+    context.localStorage.setItem('video-muted', '{"default":true}');
+    context.playerAndState.player = { core: {}, isPaused: () => false, getHTMLVideoElement: () => oldVideo, play: () => Promise.resolve() };
+    context.doTwitchPlayerTask(false, true, 'post-ad');
+    const mutedRestore = [...context.timers.values()].filter(timer => timer.delay === 3000).at(-1).callback;
+    context.playerAndState.player = { getHTMLVideoElement: () => newVideo };
+    newVideo.muted = true;
+    mutedRestore();
+    assertEq(newVideo.muted, true, label + 'reload recovery preserves a deliberate mute');
+
+    context.playerAndState.state.props.content.type = 'video';
+    const corrected = driftTargets.length;
+    restore();
+    assertEq(newVideo.muted, true, label + 'navigation to a VOD skips stale reload recovery');
+    assertEq(driftTargets.length, corrected, label + 'navigation to a VOD skips live drift correction');
+    context.playerAndState = null;
+    restore();
+    assertEq(adVideo.muted, true, label + 'an unmounted player never falls back to an ad video');
+}
+
 async function testPlaybackRegressions() {
     console.log('--- Playback regressions (script source) ---');
     const scriptPaths = [
@@ -804,6 +847,8 @@ async function testPlaybackRegressions() {
         pauseContext.document.hidden = false;
         pauseVisibilityChange();
         assertEq(pauseContext.video.plays, 1, label + 'visible user pause event stays paused across focus changes');
+
+        testReloadVideoTarget(source, label);
 
         if (scriptPath.includes('testing')) {
             const pipContext = playbackContext(source);
