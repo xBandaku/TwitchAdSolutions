@@ -100,7 +100,7 @@ function monitorHarness(file, hasPlayed = true) {
 }
 
 for (const file of files) {
-    test(file + ' recovers a frozen ad backup without stripped segments or buffer gaps', async () => {
+    test('synthetic resilience: ' + file + ' recovers a frozen ad backup without stripped segments or buffer gaps', async () => {
         for (const readyState of [2, 4]) {
             const h = monitorHarness(file);
             h.context.playerBufferState.inAdBreak = true;
@@ -117,7 +117,7 @@ for (const file of files) {
         }
     });
 
-    test(file + ' gives ad switches and reloads grace before frozen-playhead recovery', () => {
+    test('synthetic resilience: ' + file + ' gives ad switches and reloads grace before frozen-playhead recovery', () => {
         for (const [field, delay] of [['lastBackupSwitchAt', 10000], ['lastReloadAt', 15000]]) {
             const h = monitorHarness(file);
             h.context.playerBufferState.inAdBreak = true;
@@ -130,7 +130,7 @@ for (const file of files) {
         }
     });
 
-    test(file + ' re-arms ad stall recovery only after playback resumes beyond reload grace', () => {
+    test('synthetic resilience: ' + file + ' re-arms ad stall recovery only after playback resumes beyond reload grace', () => {
         const h = monitorHarness(file);
         h.context.playerBufferState.inAdBreak = true;
         h.advance(9000);
@@ -145,7 +145,7 @@ for (const file of files) {
         h.context.doTwitchPlayerTask.recovery.cancel();
     });
 
-    test(file + ' excludes paused, seeking, ended, VOD and moving playback from ad stall recovery', () => {
+    test('synthetic resilience: ' + file + ' excludes paused, seeking, ended, VOD and moving playback from ad stall recovery', () => {
         for (const reason of ['pause', 'wrapper-pause', 'intent', 'seek', 'ended', 'vod', 'progress', 'outside-ad', 'replacement', 'channel', 'startup']) {
             const h = monitorHarness(file, reason !== 'startup');
             h.context.playerBufferState.inAdBreak = reason !== 'outside-ad';
@@ -166,7 +166,7 @@ for (const file of files) {
         }
     });
 
-    test(file + ' keeps early reload budgets on sticky and backup-search paths', async () => {
+    test('synthetic resilience: ' + file + ' keeps early reload budgets on sticky and backup-search paths', async () => {
         for (const sticky of [false, true]) {
             for (const [cacheSize, threshold, expected] of [[0, 3, 2], [3, 3, 1], [0, 0, 0]]) {
                 const { context, messages } = harness(file);
@@ -189,7 +189,7 @@ for (const file of files) {
         }
     });
 
-    test(file + ' preserves post-ad actions for backups, stripping and cycle rescue', async () => {
+    test('synthetic resilience: ' + file + ' preserves post-ad actions for backups, stripping and cycle rescue', async () => {
         for (const [values, expected] of [
             [{}, null],
             [{ LastCommittedBackupPlayerType: 'autoplay' }, 'ReloadPlayer'],
@@ -211,7 +211,7 @@ for (const file of files) {
         }
     });
 
-    test(file + ' honors post-ad buffer resets despite healthy playback signals', async () => {
+    test('synthetic resilience: ' + file + ' honors post-ad buffer resets despite healthy playback signals', async () => {
         for (const stripped of [false, true]) {
             for (const ios of [false, true]) {
                 const worker = harness(file);
@@ -239,7 +239,7 @@ for (const file of files) {
         }
     });
 
-    test(file + ' still skips optional reloads when playback is near live', () => {
+    test('synthetic resilience: ' + file + ' still skips optional reloads when playback is near live', () => {
         for (const kind of [undefined, 'post-ad']) {
             const h = recoveryHarness(file), messages = [];
             h.context.postTwitchWorkerMessage = key => messages.push(key);
@@ -250,7 +250,7 @@ for (const file of files) {
         }
     });
 
-    test(file + ' upgrades a shared soft recovery before accepting playback progress', async () => {
+    test('synthetic resilience: ' + file + ' upgrades a shared soft recovery before accepting playback progress', async () => {
         const h = recoveryHarness(file);
         const pending = h.context.doTwitchPlayerTask(false, true, 'post-ad');
         h.advance(150);
@@ -267,7 +267,7 @@ for (const file of files) {
         assert.equal(await pending, true);
     });
 
-    test(file + ' permits only one late upgrade after two soft attempts', async () => {
+    test('synthetic resilience: ' + file + ' permits only one late upgrade after two soft attempts', async () => {
         const h = recoveryHarness(file);
         const pending = h.context.doTwitchPlayerTask(false, true, 'post-ad');
         h.advance(6000);
@@ -283,7 +283,7 @@ for (const file of files) {
         assert.equal(h.reloads.length, 3);
     });
 
-    test(file + ' keeps iOS token refresh separate when upgrading recovery', async () => {
+    test('synthetic resilience: ' + file + ' keeps iOS token refresh separate when upgrading recovery', async () => {
         const h = recoveryHarness(file);
         h.context.iosSoftReload = true;
         const pending = h.context.doTwitchPlayerTask(false, true, 'post-ad');
@@ -295,7 +295,7 @@ for (const file of files) {
         assert.equal(await pending, false);
     });
 
-    test(file + ' rolls back its pre-mute after a failed reload', async () => {
+    test('synthetic resilience: ' + file + ' rolls back its pre-mute after a failed reload', async () => {
         const h = recoveryHarness(file);
         h.current.player.video.muted = false;
         h.current.state.setSrc = () => { throw new Error('fixture setSrc failure'); };
@@ -306,7 +306,7 @@ for (const file of files) {
         assert.equal(h.current.player.video.muted, false);
     });
 
-    test(file + ' only rolls back mute changes owned by the cancelled recovery', async () => {
+    test('synthetic resilience: ' + file + ' only rolls back mute changes owned by the cancelled recovery', async () => {
         for (const reason of ['pause', 'pip', 'mute', 'replacement', 'navigation', 'already-muted']) {
             const h = recoveryHarness(file);
             const original = h.current.player.video;
@@ -326,7 +326,7 @@ for (const file of files) {
         }
     });
 
-    test(file + ' waits through temporary player removal during replacement', async () => {
+    test('synthetic resilience: ' + file + ' waits through temporary player removal during replacement', async () => {
         const h = recoveryHarness(file);
         const pending = h.context.doTwitchPlayerTask(false, true, 'early');
         h.context.getPlayerAndState = () => null;
@@ -342,7 +342,7 @@ for (const file of files) {
         assert.equal(h.reloads.length, 1);
     });
 
-    test(file + ' forwards ordinary worker Request inputs without losing options', async () => {
+    test('synthetic resilience: ' + file + ' forwards ordinary worker Request inputs without losing options', async () => {
         const calls = [];
         const { context } = harness(file, { fetch: async (...args) => { calls.push(args); return new Response('{}'); } });
         context.hookWorkerFetch();
@@ -353,7 +353,7 @@ for (const file of files) {
         assert.equal(request.bodyUsed, false);
     });
 
-    test(file + ' ignores a master response superseded by another channel', async () => {
+    test('synthetic resilience: ' + file + ' ignores a master response superseded by another channel', async () => {
         const pending = new Map();
         const { context } = harness(file, { fetch: input => new Promise(resolve => pending.set(String(input), resolve)) });
         context.hookWorkerFetch();
@@ -370,7 +370,7 @@ for (const file of files) {
         assert.equal(context.StreamInfosByUrl['https://fixture.invalid/variant'].ChannelName, 'second');
     });
 
-    test(file + ' expires a token relay when the main thread never responds', async () => {
+    test('synthetic resilience: ' + file + ' expires a token relay when the main thread never responds', async () => {
         const timers = new Map();
         let id = 0;
         const { context, messages } = harness(file, {
@@ -386,7 +386,7 @@ for (const file of files) {
         assert.equal(context.pendingFetchRequests.size, 0);
     });
 
-    test(file + ' recovers playback when localStorage is unavailable', async () => {
+    test('synthetic resilience: ' + file + ' recovers playback when localStorage is unavailable', async () => {
         const h = recoveryHarness(file);
         h.context.localStorage.getItem = () => { throw new Error('storage blocked'); };
         const pending = h.context.doTwitchPlayerTask(false, true, 'early');
@@ -398,7 +398,7 @@ for (const file of files) {
         assert.equal(h.reloads.length, 1);
     });
 
-    test(file + ' coalesces reloads and resumes the replacement player', async () => {
+    test('synthetic resilience: ' + file + ' coalesces reloads and resumes the replacement player', async () => {
         const { context, current, makePlayer, advance, reloads } = recoveryHarness(file);
         const oldPlayer = current.player;
         const result = context.doTwitchPlayerTask(false, true, 'early');
@@ -416,7 +416,7 @@ for (const file of files) {
         assert.equal(context.doTwitchPlayerTask.recovery, null);
     });
 
-    test(file + ' bounds player recovery and stops for navigation, pause and PiP', async () => {
+    test('synthetic resilience: ' + file + ' bounds player recovery and stops for navigation, pause and PiP', async () => {
         const stalled = recoveryHarness(file);
         const result = stalled.context.doTwitchPlayerTask(false, true, 'early');
         stalled.advance(13000);
@@ -442,7 +442,7 @@ for (const file of files) {
         ios.context.doTwitchPlayerTask.recovery.cancel();
     });
 
-    test(file + ' completes recovery across Drops mini-player navigation', async () => {
+    test('synthetic resilience: ' + file + ' completes recovery across Drops mini-player navigation', async () => {
         for (const startOnDrops of [false, true]) {
             const h = recoveryHarness(file);
             h.current.player.core.state = { path: 'https://usher.ttvnw.net/api/v2/channel/hls/fixture.m3u8?token=fixture' };
@@ -461,7 +461,7 @@ for (const file of files) {
         }
     });
 
-    test(file + ' cancels recovery when the Drops mini-player changes channel', async () => {
+    test('synthetic resilience: ' + file + ' cancels recovery when the Drops mini-player changes channel', async () => {
         const h = recoveryHarness(file);
         h.window.location.href = 'https://www.twitch.tv/drops/inventory';
         h.current.player.core.state = { path: 'https://usher.ttvnw.net/api/channel/hls/fixture.m3u8?token=fixture' };
@@ -473,7 +473,7 @@ for (const file of files) {
         assert.equal(h.reloads.length, 1);
     });
 
-    test(file + ' preserves mute and settings changes made during recovery', async () => {
+    test('synthetic resilience: ' + file + ' preserves mute and settings changes made during recovery', async () => {
         const h = recoveryHarness(file);
         h.current.player.video.muted = false;
         h.storage.set('volume', '0.8');
@@ -490,7 +490,7 @@ for (const file of files) {
         h.context.doTwitchPlayerTask.recovery.cancel();
     });
 
-    test(file + ' ranks backup codec compatibility ahead of resolution', () => {
+    test('synthetic resilience: ' + file + ' ranks backup codec compatibility ahead of resolution', () => {
         const { context } = harness(file);
         const variant = (codec, resolution, name) => '#EXT-X-STREAM-INF:' + (codec ? 'CODECS="' + codec + '",' : '') + 'RESOLUTION=' + resolution + ',FRAME-RATE=60,BANDWIDTH=3000000\nhttps://fixture.invalid/' + name + '\n';
         const hevc = variant('hvc1.1.6.L120', '1920x1080', 'hevc');
@@ -505,7 +505,7 @@ for (const file of files) {
         assert.equal(context.getStreamUrlForResolution('#EXTM3U\n' + hevc, resolution), 'https://fixture.invalid/hevc');
     });
 
-    test(file + ' uses the pre-reset freeze count for post-ad recovery', async () => {
+    test('synthetic resilience: ' + file + ' uses the pre-reset freeze count for post-ad recovery', async () => {
         for (const polls of [1, 2, 9]) {
             const { context, messages } = harness(file);
             const { url, stream } = registerStream(context, {
@@ -520,7 +520,7 @@ for (const file of files) {
         }
     });
 
-    test(file + ' confirms advancing clean playlists and bounds marker bouncing', async () => {
+    test('synthetic resilience: ' + file + ' confirms advancing clean playlists and bounds marker bouncing', async () => {
         let now = 100000;
         const make = () => {
             const { context } = harness(file, { Date: class extends Date { static now() { return now; } } });
@@ -555,7 +555,7 @@ for (const file of files) {
         assert.equal(sustained.stream.IsShowingAd, true);
     });
 
-    test(file + ' orders playlist state updates and discards obsolete responses', async () => {
+    test('synthetic resilience: ' + file + ' orders playlist state updates and discards obsolete responses', async () => {
         const { context } = harness(file);
         const { url, stream } = registerStream(context);
         const seen = [];
@@ -581,7 +581,7 @@ for (const file of files) {
         assert.ok(!seen.includes(clean));
     });
 
-    test(file + ' rejects replaced-worker and wrong-channel messages and accepts embeds', () => {
+    test('synthetic resilience: ' + file + ' rejects replaced-worker and wrong-channel messages and accepts embeds', () => {
         const worker = {}, replaced = {};
         const window = { location: { href: 'https://www.twitch.tv/fixture' } };
         const { context, messages } = harness(file, { window, twitchWorkers: [worker] });
@@ -598,7 +598,7 @@ for (const file of files) {
         assert.equal(messages.length, 1);
     });
 
-    test(file + ' matches Drops messages to the live mini-player source', () => {
+    test('synthetic resilience: ' + file + ' matches Drops messages to the live mini-player source', () => {
         const h = recoveryHarness(file), worker = {}, replaced = {};
         h.context.twitchWorkers = [worker];
         h.window.location.href = 'https://www.twitch.tv/drops/inventory';
@@ -618,7 +618,7 @@ for (const file of files) {
         assert.equal(h.context.isCurrentStreamMessage(worker, { channelName: 'fixture' }), false);
     });
 
-    test(file + ' times out backup headers and bodies and rejects invalid playlists', async () => {
+    test('synthetic resilience: ' + file + ' times out backup headers and bodies and rejects invalid playlists', async () => {
         const timers = new Map();
         let id = 0;
         const { context } = harness(file, {
@@ -645,7 +645,7 @@ for (const file of files) {
         assert.equal(timers.size, 0);
     });
 
-    test(file + ' bounds a backup search and backs off failed searches', async () => {
+    test('synthetic resilience: ' + file + ' bounds a backup search and backs off failed searches', async () => {
         let now = 100000, tokens = 0;
         const { context } = harness(file, { Date: class extends Date { static now() { return now; } } });
         const { url, stream } = registerStream(context, { IsShowingAd: true, HasConfirmedAdAttrs: true });
@@ -667,7 +667,7 @@ for (const file of files) {
         assert.ok(tokens > 2);
     });
 
-    test(file + ' processes query, v2 and relative media URLs from master playlists', async () => {
+    test('synthetic resilience: ' + file + ' processes query, v2 and relative media URLs from master playlists', async () => {
         for (const uri of ['https://fixture.invalid/index.m3u8?token=fixture', 'https://fixture.invalid/v1/chunked/stream', '../fixture/chunked?token=fixture']) {
             const masterUrl = 'https://usher.ttvnw.net/api/v2/channel/hls/fixture.m3u8?token=fixture';
             const mediaUrl = new URL(uri, masterUrl).href;
@@ -697,7 +697,7 @@ for (const file of files) {
         }
     });
 
-    test(file + ' preserves enhanced variants without resolution during AVC rewriting', async () => {
+    test('synthetic resilience: ' + file + ' preserves enhanced variants without resolution during AVC rewriting', async () => {
         for (const codec of ['hvc1.1.6.L120', 'av01.0.08M.08']) {
             const avcUrl = 'https://fixture.invalid/avc.m3u8';
             const enhancedUrl = 'https://fixture.invalid/enhanced.m3u8';
@@ -717,7 +717,7 @@ for (const file of files) {
         }
     });
 
-    test(file + ' rejects media and master playlist failures', async () => {
+    test('synthetic resilience: ' + file + ' rejects media and master playlist failures', async () => {
         for (const url of ['https://fixture.invalid/live.m3u8', 'https://usher.ttvnw.net/api/channel/hls/fixture.m3u8?token=fixture']) {
             const bodyError = new Error('fixture body failed');
             const { context } = harness(file, { fetch: async () => ({ status: 200, text: async () => { throw bodyError; } }) });
@@ -734,7 +734,7 @@ for (const file of files) {
         assert.equal(await failed.fetch('https://fixture.invalid/live.m3u8'), response);
     });
 
-    test(file + ' forwards GQL fetch inputs and captures every supported header format', async () => {
+    test('synthetic resilience: ' + file + ' forwards GQL fetch inputs and captures every supported header format', async () => {
         const calls = [], updates = [];
         const window = { fetch: async (...args) => { calls.push(args); return new Response('{}'); } };
         const { context } = harness(file, { window });

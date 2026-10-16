@@ -4,7 +4,11 @@
   "scripts": {
     "lint": "eslint .",
     "benchmark": "node tests/benchmark.js",
-    "test": "node tests/test.js && node --test tests/*.test.js",
+    "test": "npm run test:captured && npm run test:resilience && node --test --test-skip-pattern=\"captured response:|synthetic resilience:\" tests/*.test.js",
+    "test:captured": "node --test tests/captured.test.js",
+    "test:resilience": "node tests/test.js && node --test --test-name-pattern=\"synthetic resilience:\" tests/*.test.js",
+    "test:regression": "node tests/regression.js",
+    "capture:playlist": "node tests/capture.js",
     "test:browser": "playwright test --config tests/playwright.config.js",
     "test:project": "node --test tests/project.test.js",
     "test:package": "node tests/package.js"

@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { execFileSync } = require('node:child_process');
 const acorn = require('acorn');
 
 const root = path.join(__dirname, '..');
@@ -15,7 +16,10 @@ const scripts = [
 ];
 
 function readScript(file) {
-    const text = fs.readFileSync(path.join(root, file), 'utf8');
+    const ref = process.env.TWITCH_TEST_SCRIPT_REF;
+    const text = ref && scripts.some(script => script.file === file)
+        ? execFileSync('git', ['show', ref + ':' + file], { cwd: root, encoding: 'utf8' })
+        : fs.readFileSync(path.join(root, file), 'utf8');
     return file.includes('ublock-origin') ? text.slice(text.indexOf('\n') + 1) : text;
 }
 

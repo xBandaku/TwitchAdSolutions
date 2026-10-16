@@ -30,7 +30,7 @@ function braveHarness(transport) {
 }
 
 for (const userscriptFirst of [false, true]) {
-    test('Brave retry works once with both helpers, userscript first=' + userscriptFirst, async () => {
+    test('synthetic resilience: Brave retry works once with both helpers, userscript first=' + userscriptFirst, async () => {
         const calls = [];
         const fixture = braveHarness(options => {
             calls.push(options);
@@ -49,7 +49,7 @@ for (const userscriptFirst of [false, true]) {
 }
 
 for (const requestInput of [false, true]) {
-    test('Brave retry cancels the manager transport, Request input=' + requestInput, async () => {
+    test('synthetic resilience: Brave retry cancels the manager transport, Request input=' + requestInput, async () => {
         let started, aborted = 0;
         const ready = new Promise(resolve => { started = resolve; });
         const fixture = braveHarness(options => {
@@ -70,7 +70,7 @@ for (const requestInput of [false, true]) {
     });
 }
 
-test('Brave retry times out even when the manager sends no callback', async () => {
+test('synthetic resilience: Brave retry times out even when the manager sends no callback', async () => {
     let started, aborted = 0;
     const ready = new Promise(resolve => { started = resolve; });
     const fixture = braveHarness(options => {
@@ -87,7 +87,7 @@ test('Brave retry times out even when the manager sends no callback', async () =
     assert.equal(fixture.timers.size, 0);
 });
 
-test('Brave retry handles a rejected promise from a modern manager', async () => {
+test('synthetic resilience: Brave retry handles a rejected promise from a modern manager', async () => {
     const fixture = braveHarness(() => Promise.reject(new Error('fixture transport failure')));
     fixture.load('vaft/twitch-brave-fix.user.js');
     assert.deepEqual(await (await fixture.window.fetch('https://gql.twitch.tv/gql')).json(), { errors: [{ message: 'failed integrity check' }] });
@@ -102,7 +102,7 @@ for (const body of [
     [{ errors: [{ message: 'failed integrity check' }] }, { errors: [{ message: 'permission denied' }] }],
     { errors: [] }
 ]) {
-    test('Brave does not replay successful data or ordinary errors: ' + JSON.stringify(body), async () => {
+    test('synthetic resilience: Brave does not replay successful data or ordinary errors: ' + JSON.stringify(body), async () => {
         let calls = 0;
         const fixture = braveHarness(() => { calls++; throw new Error('unexpected retry'); });
         const original = new Response(JSON.stringify(body));
@@ -116,7 +116,7 @@ for (const body of [
     });
 }
 
-test('Brave still retries a batch rejected entirely by integrity validation', async () => {
+test('synthetic resilience: Brave still retries a batch rejected entirely by integrity validation', async () => {
     const calls = [];
     const fixture = braveHarness(options => {
         calls.push(options);
@@ -135,7 +135,7 @@ test('Brave still retries a batch rejected entirely by integrity validation', as
     assert.equal(calls[0].data, body);
 });
 
-test('Brave uBlock diagnostics distinguish ordinary errors from integrity rejection', async () => {
+test('synthetic resilience: Brave uBlock diagnostics distinguish ordinary errors from integrity rejection', async () => {
     const fixture = braveHarness(() => { throw new Error('uBlock must not use manager transport'); });
     const logs = [];
     let body = { errors: [{ message: 'permission denied' }] };
@@ -151,7 +151,7 @@ test('Brave uBlock diagnostics distinguish ordinary errors from integrity reject
 });
 
 for (const file of ['video-swap-new/video-swap-new.user.js', 'video-swap-new/video-swap-new-ublock-origin.js']) {
-    test(file + ' forwards GQL calls with omitted options and standard header formats', async () => {
+    test('synthetic resilience: ' + file + ' forwards GQL calls with omitted options and standard header formats', async () => {
         const calls = [], updates = [];
         const window = { fetch: async (...args) => { calls.push(args); return new Response('{}'); } };
         const context = createScriptContext(readScript(file), {
@@ -182,7 +182,7 @@ for (const file of ['video-swap-new/video-swap-new.user.js', 'video-swap-new/vid
         assert.equal(JSON.parse(calls.at(-1)[1].body).variables.playerType, context.OPT_FORCE_ACCESS_TOKEN_PLAYER_TYPE);
     });
 
-    test(file + ' keeps the token relay timeout active while reading the body', async () => {
+    test('synthetic resilience: ' + file + ' keeps the token relay timeout active while reading the body', async () => {
         let timer, cleared = false, reading;
         const ready = new Promise(resolve => { reading = resolve; });
         const context = createScriptContext(readScript(file), {
@@ -210,8 +210,20 @@ test('the script inventory includes every installable variant', () => {
     assert.deepEqual(scripts.map(script => script.file).sort(), installable.sort());
 });
 
+test('playback test names declare captured or synthetic evidence', () => {
+    const contracts = new Set(['tests/project.test.js', 'tests/release-workflow.test.js']);
+    for (const file of files.filter(file => /^tests\/.*\.(?:test|spec)\.js$/.test(file) && !contracts.has(file))) {
+        for (const node of scriptNodes(readScript(file))) {
+            if (node.type !== 'CallExpression' || node.callee.name !== 'test') continue;
+            let title = node.arguments[0];
+            while (title.type === 'BinaryExpression' && title.operator === '+') title = title.left;
+            assert.match(title.value, /^(?:captured response|synthetic resilience): /, file + ' must declare its evidence');
+        }
+    }
+});
+
 for (const { file } of scripts.filter(script => script.file.includes('brave-fix'))) {
-    test(file + ' only intercepts the intended HTTPS Twitch endpoints', () => {
+    test('synthetic resilience: ' + file + ' only intercepts the intended HTTPS Twitch endpoints', () => {
         const source = readScript(file);
         const node = scriptNodes(source).find(node => node.type === 'FunctionDeclaration' && node.id.name === 'isInterceptable');
         const context = vm.createContext({ URL, document: { location: { href: 'https://www.twitch.tv/channel' } } });

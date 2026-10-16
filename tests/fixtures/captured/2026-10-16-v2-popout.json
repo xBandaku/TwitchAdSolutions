@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "evidence": "captured response",
+  "capturedAt": "2026-10-16T12:43:09.097Z",
+  "access": "anonymous",
+  "api": "v2",
+  "playerType": "popout",
+  "master": {
+    "request": {
+      "method": "GET",
+      "url": "https://usher.ttvnw.net/api/v2/channel/hls/fixture-channel.m3u8?sig=redacted-1&token=redacted-2&allow_source=true&allow_audio_only=true&allow_spectre=true&player=twitchweb&platform=web&supported_codecs=av1%2Ch265%2Ch264&playlist_include_framerate=true"
+    },
+    "response": {
+      "status": 200,
+      "finalUrl": "https://usher.ttvnw.net/api/v2/channel/hls/fixture-channel.m3u8?sig=redacted-1&token=redacted-2&allow_source=true&allow_audio_only=true&allow_spectre=true&player=twitchweb&platform=web&supported_codecs=av1%2Ch265%2Ch264&playlist_include_framerate=true",
+      "redirectHistory": [],
+      "headers": {
+        "content-type": "application/vnd.apple.mpegurl"
+      },
+      "body": "#EXTM3U\n#EXT-X-SESSION-DATA:DATA-ID=\"NODE\",VALUE=\"redacted\"\n#EXT-X-SESSION-DATA:DATA-ID=\"MANIFEST-NODE-TYPE\",VALUE=\"redacted\"\n#EXT-X-SESSION-DATA:DATA-ID=\"MANIFEST-NODE\",VALUE=\"redacted\"\n#EXT-X-SESSION-DATA:DATA-ID=\"SUPPRESS\",VALUE=\"redacted\"\n#EXT-X-SESSION-DATA:DATA-ID=\"SERVER-TIME\",VALUE=\"1792154588.37\"\n#EXT-X-SESSION-DATA:DATA-ID=\"TRANSCODESTACK\",VALUE=\"redacted\"\n#EXT-X-SESSION-DATA:DATA-ID=\"TRANSCODEMODE\",VALUE=\"redacted\"\n#EXT-X-SESSION-DATA:DATA-ID=\"USER-IP\",VALUE=\"redacted\"\n#EXT-X-SESSION-DATA:DATA-ID=\"SERVING-ID\",VALUE=\"redacted\"\n#EXT-X-SESSION-DATA:DATA-ID=\"CLUSTER\",VALUE=\"redacted\"\n#EXT-X-SESSION-DATA:DATA-ID=\"ABS\",VALUE=\"redacted\"\n#EXT-X-SESSION-DATA:DATA-ID=\"VIDEO-SESSION-ID\",VALUE=\"redacted\"\n#EXT-X-SESSION-DATA:DATA-ID=\"BROADCAST-ID\",VALUE=\"redacted\"\n#EXT-X-SESSION-DATA:DATA-ID=\"STREAM-TIME\",VALUE=\"24040.370392\"\n#EXT-X-SESSION-DATA:DATA-ID=\"B\",VALUE=\"redacted\"\n#EXT-X-SESSION-DATA:DATA-ID=\"D\",VALUE=\"redacted\"\n#EXT-X-SESSION-DATA:DATA-ID=\"USER-COUNTRY\",VALUE=\"redacted\"\n#EXT-X-SESSION-DATA:DATA-ID=\"MANIFEST-CLUSTER\",VALUE=\"redacted\"\n#EXT-X-SESSION-DATA:DATA-ID=\"ORIGIN\",VALUE=\"redacted\"\n#EXT-X-SESSION-DATA:DATA-ID=\"C\",VALUE=\"redacted\"\n#EXT-X-SESSION-DATA:DATA-ID=\"E\",VALUE=\"redacted\"\n#EXT-X-STREAM-INF:BANDWIDTH=160000,CODECS=\"mp4a.40.2\",STABLE-VARIANT-ID=\"audio_only\",IVS-NAME=\"audio_only\",IVS-VARIANT-SOURCE=\"transcode\"\nhttps://cdn-1.invalid/redacted-3/redacted-4/redacted-5.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=7943784,RESOLUTION=1920x1080,CODECS=\"avc1.64002A,mp4a.40.2\",FRAME-RATE=60.000,STABLE-VARIANT-ID=\"1080p60\",IVS-NAME=\"1080p60\",IVS-VARIANT-SOURCE=\"source\"\nhttps://cdn-1.invalid/redacted-3/redacted-4/redacted-6.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=3422999,RESOLUTION=1280x720,CODECS=\"avc1.4D401F,mp4a.40.2\",FRAME-RATE=60.000,STABLE-VARIANT-ID=\"720p60\",IVS-NAME=\"720p60\",IVS-VARIANT-SOURCE=\"transcode\"\nhttps://cdn-1.invalid/redacted-3/redacted-4/redacted-7.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=2373000,RESOLUTION=1280x720,CODECS=\"avc1.4D401F,mp4a.40.2\",FRAME-RATE=30.000,STABLE-VARIANT-ID=\"720p30\",IVS-NAME=\"720p\",IVS-VARIANT-SOURCE=\"transcode\"\nhttps://cdn-1.invalid/redacted-3/redacted-4/redacted-8.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=1427999,RESOLUTION=852x480,CODECS=\"avc1.4D401F,mp4a.40.2\",FRAME-RATE=30.000,STABLE-VARIANT-ID=\"480p30\",IVS-NAME=\"480p\",IVS-VARIANT-SOURCE=\"transcode\"\nhttps://cdn-1.invalid/redacted-3/redacted-4/redacted-9.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=630000,RESOLUTION=640x360,CODECS=\"avc1.4D401F,mp4a.40.2\",FRAME-RATE=30.000,STABLE-VARIANT-ID=\"360p30\",IVS-NAME=\"360p\",IVS-VARIANT-SOURCE=\"transcode\"\nhttps://cdn-1.invalid/redacted-3/redacted-4/redacted-10.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=230000,RESOLUTION=284x160,CODECS=\"avc1.4D401F,mp4a.40.2\",FRAME-RATE=30.000,STABLE-VARIANT-ID=\"160p30\",IVS-NAME=\"160p\",IVS-VARIANT-SOURCE=\"transcode\"\nhttps://cdn-1.invalid/redacted-3/redacted-4/redacted-11.m3u8",
+      "sourceSha256": "fe9c01e5850b6be5036661146e55f642d3ac01322e031f59b88085fc5704a282",
+      "sanitizedSha256": "cac373a32d216ff4e2a6962a8ac9dc6e4e5c8bcd885d2f4b037d85cd78f4427c"
+    },
+    "coverage": {
+      "variants": 7,
+      "withResolution": 6,
+      "avcWithResolution": 6,
+      "enhancedWithResolution": 0,
+      "enhancedWithoutResolution": 0,
+      "relativeUris": 0,
+      "segments": 0,
+      "adSignifiers": [],
+      "adUrlMatches": [
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  "media": {
+    "request": {
+      "method": "GET",
+      "url": "https://cdn-1.invalid/redacted-3/redacted-4/redacted-6.m3u8"
+    },
+    "response": {
+      "status": 200,
+      "finalUrl": "https://cdn-1.invalid/redacted-3/redacted-4/redacted-6.m3u8",
+      "redirectHistory": [],
+      "headers": {
+        "content-type": "application/vnd.apple.mpegurl"
+      },
+      "body": "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:6\n#EXT-X-MEDIA-SEQUENCE:12023\n#EXT-X-TWITCH-LIVE-SEQUENCE:12023\n#EXT-X-TWITCH-ELAPSED-SECS:24005.433\n#EXT-X-TWITCH-TOTAL-SECS:24035.433\n#EXT-X-DATERANGE:ID=\"redacted-12\",CLASS=\"timestamp\",START-DATE=\"2026-10-16T12:43:08.636Z\",END-ON-NEXT=YES,X-SERVER-TIME=\"1792154588.64\"\n#EXT-X-DATERANGE:ID=\"redacted-13\",CLASS=\"twitch-session\",START-DATE=\"2026-10-16T12:43:08.636Z\",END-ON-NEXT=YES,X-TV-TWITCH-SESSIONID=\"redacted-14\"\n#EXT-X-DATERANGE:ID=\"redacted-15\",CLASS=\"twitch-stream-source\",START-DATE=\"2026-10-16T12:42:37.795Z\",END-ON-NEXT=YES,X-TV-TWITCH-STREAM-SOURCE=\"redacted-16\"\n#EXT-X-DATERANGE:ID=\"redacted-17\",CLASS=\"twitch-trigger\",START-DATE=\"2026-10-16T12:42:37.795Z\",END-ON-NEXT=YES,X-TV-TWITCH-TRIGGER-URL=\"redacted-18\"\n#EXT-X-PROGRAM-DATE-TIME:2026-10-16T12:42:37.795Z\n#EXTINF:2.000,live\nhttps://cdn-2.invalid/redacted-3/redacted-19/redacted-20.ts?dna=redacted-21\n#EXT-X-PROGRAM-DATE-TIME:2026-10-16T12:42:39.795Z\n#EXTINF:2.000,live\nhttps://cdn-2.invalid/redacted-3/redacted-19/redacted-22.ts?dna=redacted-21\n#EXT-X-PROGRAM-DATE-TIME:2026-10-16T12:42:41.795Z\n#EXTINF:2.000,live\nhttps://cdn-2.invalid/redacted-3/redacted-19/redacted-23.ts?dna=redacted-21\n#EXT-X-PROGRAM-DATE-TIME:2026-10-16T12:42:43.795Z\n#EXTINF:2.000,live\nhttps://cdn-2.invalid/redacted-3/redacted-19/redacted-24.ts?dna=redacted-21\n#EXT-X-PROGRAM-DATE-TIME:2026-10-16T12:42:45.795Z\n#EXTINF:2.000,live\nhttps://cdn-2.invalid/redacted-3/redacted-19/redacted-25.ts?dna=redacted-21\n#EXT-X-PROGRAM-DATE-TIME:2026-10-16T12:42:47.795Z\n#EXTINF:2.000,live\nhttps://cdn-2.invalid/redacted-3/redacted-19/redacted-26.ts?dna=redacted-21\n#EXT-X-PROGRAM-DATE-TIME:2026-10-16T12:42:49.795Z\n#EXTINF:2.000,live\nhttps://cdn-2.invalid/redacted-3/redacted-19/redacted-27.ts?dna=redacted-21\n#EXT-X-PROGRAM-DATE-TIME:2026-10-16T12:42:51.795Z\n#EXTINF:2.000,live\nhttps://cdn-2.invalid/redacted-3/redacted-19/redacted-28.ts?dna=redacted-21\n#EXT-X-PROGRAM-DATE-TIME:2026-10-16T12:42:53.795Z\n#EXTINF:2.000,live\nhttps://cdn-2.invalid/redacted-3/redacted-19/redacted-29.ts?dna=redacted-21\n#EXT-X-PROGRAM-DATE-TIME:2026-10-16T12:42:55.795Z\n#EXTINF:2.000,live\nhttps://cdn-2.invalid/redacted-3/redacted-19/redacted-30.ts?dna=redacted-21\n#EXT-X-PROGRAM-DATE-TIME:2026-10-16T12:42:57.795Z\n#EXTINF:2.000,live\nhttps://cdn-2.invalid/redacted-3/redacted-19/redacted-31.ts?dna=redacted-21\n#EXT-X-PROGRAM-DATE-TIME:2026-10-16T12:42:59.795Z\n#EXTINF:2.000,live\nhttps://cdn-2.invalid/redacted-3/redacted-19/redacted-32.ts?dna=redacted-21\n#EXT-X-PROGRAM-DATE-TIME:2026-10-16T12:43:01.795Z\n#EXTINF:2.000,live\nhttps://cdn-2.invalid/redacted-3/redacted-19/redacted-33.ts?dna=redacted-21\n#EXT-X-PROGRAM-DATE-TIME:2026-10-16T12:43:03.795Z\n#EXTINF:2.000,live\nhttps://cdn-2.invalid/redacted-3/redacted-19/redacted-34.ts?dna=redacted-21\n#EXT-X-PROGRAM-DATE-TIME:2026-10-16T12:43:05.795Z\n#EXTINF:2.000,live\nhttps://cdn-2.invalid/redacted-3/redacted-19/redacted-35.ts?dna=redacted-21\n",
+      "sourceSha256": "d61d4ca79fdd47e8b50e06a2c77cc10202b7be60c0998668b3adad9fba41f464",
+      "sanitizedSha256": "29e9aef24decdc103d7dd682d5d0b72799a1276c17d7f8bc2ce693ad91d8b6dc"
+    },
+    "coverage": {
+      "variants": 0,
+      "withResolution": 0,
+      "avcWithResolution": 0,
+      "enhancedWithResolution": 0,
+      "enhancedWithoutResolution": 0,
+      "relativeUris": 0,
+      "segments": 15,
+      "adSignifiers": [],
+      "adUrlMatches": [
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  "sanitization": [
+    "Channel names, CDN hosts, opaque path components, fragments and non-public query values replaced consistently.",
+    "Session-data values and tracking attributes redacted; tag order, line endings, codecs, resolutions and timing retained.",
+    "Only the response Content-Type header retained. No cookies, authorization headers or token responses stored.",
+    "Variant counts, missing-resolution counts, relative URI counts and ad-signifier matches checked before and after redaction."
+  ]
+}

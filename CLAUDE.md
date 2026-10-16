@@ -80,6 +80,15 @@ All logs use `[AD DEBUG]` prefix. Logs in `.toString()` functions must use `cons
 
 Run `npm ci --ignore-scripts`, then `npm test` for syntax, metadata, paired-script/worker consistency, and runtime regressions. `npm run test:package` checks the installable artifacts. Run `npx playwright install` once, then `npm run test:browser` for offline Chromium, Firefox, and WebKit fixtures. GitHub Actions runs project checks on Node 22/24 and Windows/Linux, plus browser tests and workflow lint.
 
+## Evidence for playback findings
+
+- Use the labels `confirmed live`, `reproduced from a captured response`, or `synthetic edge case` in findings and PR descriptions. State the missing evidence and the scope of the reproduction. Captured-response replay is offline evidence, not a live browser playback test.
+- Claim a current Twitch playback bug only with a live reproduction or an unmodified triggering response. Label synthetic-only fixes as preventive hardening. HLS validity alone does not establish that Twitch sends an input.
+- Run `npm run test:captured` first. Keep fabricated playlists and mocked player behavior in the synthetic resilience suite. Never change a captured response to manufacture a trigger; put mutations in synthetic tests.
+- Refresh captures with `npm run capture:playlist -- <channel> <new-output.json> [playerType] [v1|v2]`. Review redactions before committing. Keep capture time, request parameters, HTTP status, final URL, redirect history and sanitization notes. Do not store raw token responses or private headers.
+- Report whether the failing path ran. No HEVC/AV1 variants means enhanced-codec rewrite coverage is absent, even if every request succeeded. A sample without the trigger cannot rule out the issue elsewhere.
+- For each regression, demonstrate failure before the fix for the expected reason and success afterward. Use `npm run test:regression -- <before-ref> <test-name-pattern> <expected-error>` or record equivalent manual commands and output. This verifies the test, not production impact.
+
 ## Branches and releases
 
 master is the only project branch. Commit changes to master after validation. Maintain one version of each script, with matching userscript and uBlock formats where both exist. Tagged releases are snapshots of master; do not add separate beta or testing scripts.

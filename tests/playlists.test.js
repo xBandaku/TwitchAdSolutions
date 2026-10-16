@@ -8,7 +8,7 @@ const playlist = (sequence, segments) => '#EXTM3U\n#EXT-X-VERSION:6\n#EXT-X-TARG
     + sequence + '\n' + segments.map(([kind, url]) => '#EXTINF:2,' + kind + '\n' + url + '\n').join('');
 
 for (const file of files) {
-    test(file + ' restores original sequence numbers without retaining ad media entries', () => {
+    test('synthetic resilience: ' + file + ' restores original sequence numbers without retaining ad media entries', () => {
         for (const count of [2, 8]) {
             const context = createScriptContext(readScript(file), { console: { log() {} }, postMessage() {} });
             const stream = context.createStreamInfo('fixture', '', '');
@@ -26,7 +26,7 @@ for (const file of files) {
         }
     });
 
-    test(file + ' does not collapse ad gaps or replace cached live metadata with ad metadata', () => {
+    test('synthetic resilience: ' + file + ' does not collapse ad gaps or replace cached live metadata with ad metadata', () => {
         const context = createScriptContext(readScript(file), { console: { log() {} }, postMessage() {} });
         const stream = context.createStreamInfo('fixture', '', '');
         const mixed = playlist(100, [['live', 'https://fixture.invalid/live100.ts'],
@@ -52,7 +52,7 @@ for (const file of files) {
 }
 
 for (const file of [...files, 'strip/strip.user.js']) {
-    test(file + ' resolves media and inline URLs against the final playlist location', () => {
+    test('synthetic resilience: ' + file + ' resolves media and inline URLs against the final playlist location', () => {
         const context = createScriptContext(readScript(file), { URL });
         const source = '#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="../key.bin"\n#EXT-X-MAP:URI="init.mp4"\n'
             + '#EXT-X-PART:DURATION=0.5,URI="part.ts"\n#EXT-X-PRELOAD-HINT:TYPE=PART,URI="next.ts"\n'
