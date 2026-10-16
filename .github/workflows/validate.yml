@@ -110,3 +110,15 @@ jobs:
           test-results/
         if-no-files-found: error
         retention-days: 7
+
+  release-tests:
+    name: release-tests
+    needs: validate
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+    - name: Require the matrix containing release tests to pass
+      env:
+        RESULT: ${{ needs.validate.result }}
+      run: test "$RESULT" = success
