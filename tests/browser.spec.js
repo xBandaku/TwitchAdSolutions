@@ -26,7 +26,7 @@ async function boot(page, context, file, url = 'https://www.twitch.tv/fixture-ch
         } else if (parsed.pathname === '/fixtures/blocked-ad.ts') {
             await route.fulfill({ contentType: 'video/mp4', body: 'original ad media' });
         } else if (parsed.hostname === 'gql.twitch.tv' && parsed.pathname === '/gql') {
-            await route.fulfill({ contentType: 'application/json', body: '{"errors":[{"message":"fixture fingerprint rejection"}]}' });
+            await route.fulfill({ contentType: 'application/json', body: '{"errors":[{"message":"failed integrity check"}]}' });
         } else if (parsed.pathname === '/favicon.ico') {
             await route.fulfill({ status: 204 });
         } else {
@@ -580,7 +580,7 @@ for (const url of ['https://gql.twitch.tv/gql', 'https://gql.twitch.tv/integrity
     for (const requestInput of [false, true]) {
         test('Brave userscript retries a rejected ' + (requestInput ? 'Request' : 'URL') + ' at ' + url + ' through the manager transport', async ({ page, context }) => {
             await boot(page, context, 'vaft/twitch-brave-fix.user.js');
-            await context.route(url, route => route.fulfill({ contentType: 'application/json', body: '{"errors":[{"message":"fixture fingerprint rejection"}]}' }));
+            await context.route(url, route => route.fulfill({ contentType: 'application/json', body: '{"errors":[{"message":"failed integrity check"}]}' }));
             const result = await page.evaluate(async ({ requestInput, url }) => {
                 const init = { method: 'POST', body: '{"operationName":"Fixture"}' };
                 const response = await (requestInput ? fetch(new Request(url, init)) : fetch(url, init));
@@ -601,8 +601,29 @@ test('Brave userscript preserves the original response when manager transport fa
     expect(await page.evaluate(async () => {
         window.__gmFail = true;
         return (await fetch('https://gql.twitch.tv/gql', { method: 'POST', body: '{}' })).json();
-    })).toEqual({ errors: [{ message: 'fixture fingerprint rejection' }] });
+    })).toEqual({ errors: [{ message: 'failed integrity check' }] });
 });
+
+for (const body of [
+    [{ data: { fixtureMutation: { id: 'written-once' } } }, { errors: [{ message: 'failed integrity check' }] }],
+    { data: { fixtureMutation: { id: 'written-once' } }, errors: [{ message: 'failed integrity check' }] },
+    { errors: [{ message: 'permission denied' }] }
+]) {
+    test('Brave preserves successful operations and ordinary GraphQL errors: ' + JSON.stringify(body), async ({ page, context }) => {
+        await boot(page, context, 'vaft/twitch-brave-fix.user.js');
+        let nativeCalls = 0;
+        await context.route('https://gql.twitch.tv/gql', async route => {
+            nativeCalls++;
+            await route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
+        });
+        const result = await page.evaluate(async () => ({
+            body: await (await fetch('https://gql.twitch.tv/gql', { method: 'POST', body: '[{"operationName":"FixtureMutation"},{"operationName":"FixtureQuery"}]' })).json(),
+            managerCalls: window.__gmCalls.length
+        }));
+        expect(result).toEqual({ body, managerCalls: 0 });
+        expect(nativeCalls).toBe(1);
+    });
+}
 
 for (const userscriptFirst of [false, true]) {
     test('Brave retry survives both helper load orders, userscript first=' + userscriptFirst, async ({ page, context }) => {
@@ -640,6 +661,6 @@ test('Brave userscript bounds a silent manager request', async ({ page, context 
     });
     await expect.poll(() => page.evaluate(() => window.__gmCalls.length)).toBe(1);
     await page.clock.fastForward(15000);
-    expect(await page.evaluate(() => window.__retryResult)).toEqual({ errors: [{ message: 'fixture fingerprint rejection' }] });
+    expect(await page.evaluate(() => window.__retryResult)).toEqual({ errors: [{ message: 'failed integrity check' }] });
     expect(await page.evaluate(() => window.__gmAborts)).toBe(1);
 });

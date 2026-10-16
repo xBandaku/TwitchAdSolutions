@@ -2,12 +2,13 @@
 
 - Preserve original media sequence numbers when replaying cached recovery content. Replace the ad media section, retain a contiguous live segment run, and preserve its encryption, init-map and discontinuity metadata. Applies to both vaft and video-swap-new install formats.
 - Resolve relative segment and inline HLS URLs against the fetched playlist URL before ad detection and caching, including redirected native and backup playlists. Also applies to the standalone strip script.
-- Versions: vaft 68.5.28 (internal 114), video-swap-new 1.90 (internal 58), strip 1.11 (internal 28).
+- Restrict Brave retries to explicit integrity rejections without data in every batch response. Preserve successful, partially successful and ordinary GraphQL error responses without replaying their operations. Apply the same rejection classification to uBlock diagnostics.
+- Versions: vaft 68.5.28 (internal 114), video-swap-new 1.90 (internal 58), Brave helper 1.3.4 (internal 8), strip 1.11 (internal 28).
 
 ### Validation
 
-- Passed 255 runtime assertions, 139 Node tests, ESLint and packaging verification for all seven scripts.
-- Passed all 186 offline browser tests across Chromium, Firefox and WebKit, including regressions for recovery sequence numbering, relative ad media blocking.
+- Passed 255 runtime assertions, 147 Node tests, ESLint and packaging verification for all seven scripts.
+- Passed all 195 offline browser tests across Chromium, Firefox and WebKit, including regressions for recovery sequence numbering, relative ad media blocking and partially successful GraphQL batches.
 
 ## v68.5.27 (2026-10-15)
 

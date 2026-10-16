@@ -20,8 +20,8 @@ twitch-brave-fix.js text/javascript
         if (_clipHost === 'clips.twitch.tv' || /^\/[^/]+\/clip\/[^/]+/.test(_clipPath)) return;
     }
     'use strict';
-    const ourVersion = 7;
-    console.log('[TwitchBraveFix-uBO] v1.3.3 loading');
+    const ourVersion = 8;
+    console.log('[TwitchBraveFix-uBO] v1.3.4 loading');
     // The userscript can add its retry transport after this diagnostic helper loads.
     if (typeof window.twitchBraveFixVersion !== 'undefined' && window.twitchBraveFixVersion >= ourVersion) {
         console.log('[TwitchBraveFix-uBO] CONFLICT: skipped — another instance already active (v' + window.twitchBraveFixVersion + ')');
@@ -76,8 +76,8 @@ twitch-brave-fix.js text/javascript
     } catch (_e) { /* read-only on some builds — fall through */ }
 
     // Diagnostic fetch hook — no recovery path here, just surfaces a single console line
-    // when Twitch's gateway rejects an interceptable request with a top-level `errors`
-    // field. Tells the user that JS-surface spoofs alone weren't enough for this session
+    // when Twitch's gateway returns an explicit integrity rejection without data.
+    // Tells the user that JS-surface spoofs alone weren't enough for this session
     // and the userscript variant (with GM xhr header retry) is needed. Logs once per page
     // load to avoid spam.
     const realFetch = window.fetch;
@@ -94,6 +94,17 @@ twitch-brave-fix.js text/javascript
         }
     }
 
+    // A GraphQL execution error is not evidence of fingerprint rejection. Replay
+    // only a wholly rejected response; even data:null can indicate partial execution.
+    function isIntegrityRejection(parsed) {
+        const responses = Array.isArray(parsed) ? parsed : [parsed];
+        return responses.length > 0 && responses.every(response =>
+            response && typeof response === 'object' && !('data' in response)
+            && Array.isArray(response.errors) && response.errors.length > 0
+            && response.errors.every(error => typeof error?.message === 'string'
+                && /^(?:failed (?:client )?integrity check|(?:client )?integrity check failed|invalid (?:client )?integrity token|fingerprint validation failed)[.!]?$/i.test(error.message.trim())));
+    }
+
     let _errorReported = false;
     async function _checkForErrors(url, response) {
         if (_errorReported || response.status !== 200) return response;
@@ -102,11 +113,9 @@ twitch-brave-fix.js text/javascript
         try { bodyText = await cloned.text(); } catch (_e) { return response; }
         let parsed;
         try { parsed = JSON.parse(bodyText); } catch (_e) { return response; }
-        const hasErrors = typeof parsed?.errors !== 'undefined'
-            || (Array.isArray(parsed) && parsed.some(p => typeof p?.errors !== 'undefined'));
-        if (hasErrors) {
+        if (isIntegrityRejection(parsed)) {
             _errorReported = true;
-            console.log('[TwitchBraveFix-uBO] DETECTED GQL errors on ' + url.replace(/\?.*$/, '')
+            console.log('[TwitchBraveFix-uBO] DETECTED integrity rejection on ' + url.replace(/\?.*$/, '')
                 + ' — JS-surface spoofs were insufficient for this session. The .user.js variant '
                 + 'retries via GM_xmlHttpRequest with full header spoofs; install it if Twitch '
                 + 'login or playback fails persistently.');

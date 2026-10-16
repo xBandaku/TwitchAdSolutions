@@ -18,7 +18,7 @@ const canonical = node => JSON.stringify(node, function(key, value) {
 function braveHarness(transport) {
     const timers = new Map();
     let timerId = 0;
-    const window = { frameElement: null, fetch: async () => new Response('{"errors":[{"message":"fixture rejection"}]}') };
+    const window = { frameElement: null, fetch: async () => new Response('{"errors":[{"message":"failed integrity check"}]}') };
     const context = vm.createContext({
         window, document: { location: new URL('https://www.twitch.tv/channel') },
         navigator: { userAgent: 'Chrome/156.0 Windows' }, console: { log() {} },
@@ -82,7 +82,7 @@ test('Brave retry times out even when the manager sends no callback', async () =
     const result = fixture.window.fetch('https://gql.twitch.tv/gql');
     await ready;
     [...fixture.timers.values()][0].callback();
-    assert.deepEqual(await (await result).json(), { errors: [{ message: 'fixture rejection' }] });
+    assert.deepEqual(await (await result).json(), { errors: [{ message: 'failed integrity check' }] });
     assert.equal(aborted, 1);
     assert.equal(fixture.timers.size, 0);
 });
@@ -90,8 +90,64 @@ test('Brave retry times out even when the manager sends no callback', async () =
 test('Brave retry handles a rejected promise from a modern manager', async () => {
     const fixture = braveHarness(() => Promise.reject(new Error('fixture transport failure')));
     fixture.load('vaft/twitch-brave-fix.user.js');
-    assert.deepEqual(await (await fixture.window.fetch('https://gql.twitch.tv/gql')).json(), { errors: [{ message: 'fixture rejection' }] });
+    assert.deepEqual(await (await fixture.window.fetch('https://gql.twitch.tv/gql')).json(), { errors: [{ message: 'failed integrity check' }] });
     assert.equal(fixture.timers.size, 0);
+});
+
+for (const body of [
+    [{ data: { mutation: { id: 'already-written' } } }, { errors: [{ message: 'failed integrity check' }] }],
+    { data: { mutation: { id: 'already-written' } }, errors: [{ message: 'failed integrity check' }] },
+    { data: null, errors: [{ message: 'failed integrity check' }] },
+    { errors: [{ message: 'permission denied' }] },
+    [{ errors: [{ message: 'failed integrity check' }] }, { errors: [{ message: 'permission denied' }] }],
+    { errors: [] }
+]) {
+    test('Brave does not replay successful data or ordinary errors: ' + JSON.stringify(body), async () => {
+        let calls = 0;
+        const fixture = braveHarness(() => { calls++; throw new Error('unexpected retry'); });
+        const original = new Response(JSON.stringify(body));
+        fixture.window.fetch = async () => original;
+        fixture.load('vaft/twitch-brave-fix.user.js');
+        const response = await fixture.window.fetch('https://gql.twitch.tv/gql', { method: 'POST', body: '{}' });
+        assert.equal(response, original);
+        assert.deepEqual(await response.json(), body);
+        assert.equal(calls, 0);
+        assert.equal(fixture.timers.size, 0);
+    });
+}
+
+test('Brave still retries a batch rejected entirely by integrity validation', async () => {
+    const calls = [];
+    const fixture = braveHarness(options => {
+        calls.push(options);
+        queueMicrotask(() => options.onload({ status: 200, responseText: '[{"data":{"ok":true}},{"data":{"ok":true}}]' }));
+        return { abort() {} };
+    });
+    fixture.window.fetch = async () => new Response(JSON.stringify([
+        { errors: [{ message: 'failed integrity check' }] },
+        { errors: [{ message: 'invalid integrity token' }] }
+    ]));
+    fixture.load('vaft/twitch-brave-fix.user.js');
+    const body = '[{"operationName":"FixtureOne"},{"operationName":"FixtureTwo"}]';
+    const response = await fixture.window.fetch('https://gql.twitch.tv/gql', { method: 'POST', body });
+    assert.deepEqual(await response.json(), [{ data: { ok: true } }, { data: { ok: true } }]);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].data, body);
+});
+
+test('Brave uBlock diagnostics distinguish ordinary errors from integrity rejection', async () => {
+    const fixture = braveHarness(() => { throw new Error('uBlock must not use manager transport'); });
+    const logs = [];
+    let body = { errors: [{ message: 'permission denied' }] };
+    fixture.context.console = { log: message => logs.push(message) };
+    fixture.window.fetch = async () => new Response(JSON.stringify(body));
+    fixture.load('vaft/twitch-brave-fix-ublock-origin.js');
+    await fixture.window.fetch('https://gql.twitch.tv/gql');
+    assert.ok(!logs.some(message => message.includes('DETECTED')));
+    body = { errors: [{ message: 'failed integrity check' }] };
+    await fixture.window.fetch('https://gql.twitch.tv/gql');
+    await fixture.window.fetch('https://gql.twitch.tv/gql');
+    assert.equal(logs.filter(message => message.includes('DETECTED integrity rejection')).length, 1);
 });
 
 for (const file of ['video-swap-new/video-swap-new.user.js', 'video-swap-new/video-swap-new-ublock-origin.js']) {
