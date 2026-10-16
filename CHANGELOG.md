@@ -1,3 +1,17 @@
+## v68.5.29 (2026-10-15)
+
+### Repository updates
+
+- Restyle Discord notifications with compact repository cards, clearer titles, consistent status colors, actor footers and release download links.
+- Consolidate project and browser checks into one CI workflow and retain the required release-tests status without rerunning its tests.
+- Run source and workflow validation before publishing and announce automated releases directly to Discord.
+- Add weekly GitHub Actions and npm dependency updates.
+
+### Distribution
+
+- Advance the vaft userscript version to 68.5.29 for this maintenance release. Playback code and the internal version (114) are unchanged.
+- Include both vaft install formats, the seven-script ZIP bundle and SHA256SUMS.
+
 ## v68.5.28 (2026-10-15)
 
 - Preserve original media sequence numbers when replaying cached recovery content. Replace the ad media section, retain a contiguous live segment run, and preserve its encryption, init-map and discontinuity metadata. Applies to both vaft and video-swap-new install formats.
