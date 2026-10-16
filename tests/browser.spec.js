@@ -521,6 +521,61 @@ for (const file of scripts.filter(script => script.file.includes('brave-fix')).m
     });
 }
 
+for (const file of ['vaft/vaft.user.js', 'vaft/vaft-ublock-origin.js',
+    'video-swap-new/video-swap-new.user.js', 'video-swap-new/video-swap-new-ublock-origin.js']) {
+    test(file + ' preserves recovery numbering and blocks relative ad media inside its injected worker', async ({ page, context }) => {
+        const state = await boot(page, context, file);
+        await context.route('https://www.twitch.tv/fixtures/relative.m3u8', route => route.fulfill({
+            contentType: 'application/vnd.apple.mpegurl',
+            body: '#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:300\n#EXT-X-DATERANGE:CLASS="twitch-stitched-ad",TYPE="MIDROLL"\n#EXTINF:2,ad\nblocked-ad.ts\n'
+        }));
+        const result = await page.evaluate(async () => {
+            const source = String.raw`
+                (async () => {
+                    try {
+                        if (typeof BackupPlayerTypes !== 'undefined') BackupPlayerTypes = [];
+                        if (typeof PreferLowQualityBackup !== 'undefined') PreferLowQualityBackup = false;
+                        if (typeof OPT_BACKUP_PLAYER_TYPES !== 'undefined') OPT_BACKUP_PLAYER_TYPES = [];
+                        const cache = createStreamInfo('fixture-channel', '', '');
+                        stripAdSegments('#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:100\n#EXTINF:2,ad\nhttps://www.twitch.tv/fixtures/ad100.ts\n#EXTINF:2,live\nhttps://www.twitch.tv/fixtures/live101.ts\n#EXTINF:2,live\nhttps://www.twitch.tv/fixtures/live102.ts\n', false, cache);
+                        const recovered = stripAdSegments('#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:200\n#EXTINF:2,ad\nhttps://www.twitch.tv/fixtures/ad200.ts\n#EXTINF:2,ad\nhttps://www.twitch.tv/fixtures/ad201.ts\n', false, cache);
+                        const firstSequence = Number(recovered.match(/#EXT-X-MEDIA-SEQUENCE:(\d+)/)[1]);
+                        const segments = recovered.split('\n').filter(line => line && !line.startsWith('#'))
+                            .map((url, i) => ({ url, sequence: firstSequence + i }));
+                        const url = 'https://www.twitch.tv/fixtures/relative.m3u8';
+                        const stream = createStreamInfo('fixture-channel', '', '');
+                        const resolution = { Resolution: '1920x1080', FrameRate: 60, Codecs: 'avc1.4d4028' };
+                        if (stream.Urls instanceof Map) stream.Urls.set(url, resolution);
+                        else stream.Urls[url] = resolution;
+                        StreamInfos['fixture-channel'] = stream;
+                        StreamInfosByUrl[url] = stream;
+                        if (typeof ActiveStreamInfo !== 'undefined') ActiveStreamInfo = stream;
+                        const media = await (await fetch(url)).text();
+                        const uri = media.split('\n').find(line => line && !line.startsWith('#'));
+                        const response = await fetch(new URL(uri, url).href);
+                        const bytes = new Uint8Array(await response.arrayBuffer());
+                        self.postMessage({ fixture: true, segments, media, signature: Array.from(bytes.slice(4, 8)) });
+                    } catch (error) { self.postMessage({ fixture: true, error: error.stack }); }
+                })();
+            `;
+            const worker = new Worker(URL.createObjectURL(new Blob([source], { type: 'text/javascript' })));
+            try {
+                return await new Promise((resolve, reject) => {
+                    worker.addEventListener('message', event => { if (event.data.fixture) resolve(event.data); });
+                    worker.addEventListener('error', event => reject(new Error(event.message)), { once: true });
+                });
+            } finally { worker.terminate(); }
+        });
+        expect(result.error).toBeUndefined();
+        expect(result.segments).toEqual([
+            { url: 'https://www.twitch.tv/fixtures/live101.ts', sequence: 101 },
+            { url: 'https://www.twitch.tv/fixtures/live102.ts', sequence: 102 }
+        ]);
+        expect(result.signature).toEqual([102, 116, 121, 112]);
+        expect(state.requests.some(url => url.endsWith('/blocked-ad.ts'))).toBe(false);
+    });
+}
+
 for (const url of ['https://gql.twitch.tv/gql', 'https://gql.twitch.tv/integrity', 'https://passport.twitch.tv/integrity']) {
     for (const requestInput of [false, true]) {
         test('Brave userscript retries a rejected ' + (requestInput ? 'Request' : 'URL') + ' at ' + url + ' through the manager transport', async ({ page, context }) => {

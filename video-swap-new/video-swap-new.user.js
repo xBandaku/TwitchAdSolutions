@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TwitchAdSolutions (video-swap-new)
 // @namespace    https://github.com/ryanbr/TwitchAdSolutions
-// @version      1.89
+// @version      1.90
 // @updateURL    https://github.com/xBandaku/TwitchAdSolutions/raw/master/video-swap-new/video-swap-new.user.js
 // @downloadURL  https://github.com/xBandaku/TwitchAdSolutions/raw/master/video-swap-new/video-swap-new.user.js
 // @description  Multiple solutions for blocking Twitch ads (video-swap-new)
@@ -47,7 +47,7 @@
         }
     }
     'use strict';
-    const ourTwitchAdSolutionsVersion = 57;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 58;// Used to prevent conflicts with outdated versions of the scripts
     console.log('[AD DEBUG] TwitchAdSolutions video-swap-new v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
         console.log('[AD DEBUG] CONFLICT: video-swap-new v' + ourTwitchAdSolutionsVersion + ' skipped — another script already active (v' + window.twitchAdSolutionsVersion + '). Remove duplicate scripts.');
@@ -114,6 +114,7 @@
             IsStrippingAdSegments: false,
             NumStrippedAdSegments: 0,
             RecoverySegments: [],
+            RecoveryM3U8: null,
             RecoveryStartSeq: undefined,
             CleanPlaylistCount: 0,
             PendingAdEndAt: 0,// Timestamp of first clean backup-poll seen this break — drives the bounce-tolerant max-wait escalation gate (TTV-AB v6.6.7 #1/#4)
@@ -260,6 +261,7 @@
                     ${hasAdTags.toString()}
                     ${getMatchedAdSignifiers.toString()}
                     ${stripAdSegments.toString()}
+                    ${resolvePlaylistUrls.toString()}
                     ${processM3U8.toString()}
                     ${hookWorkerFetch.toString()}
                     ${declareOptions.toString()}
@@ -523,11 +525,11 @@
                         if (encodingsM3u8Response != null && encodingsM3u8Response.status === 200) {
                             streamInfo.ConsecutiveTokenFetchFailures = 0;
                             streamInfo.LoggedTokenFailureStreak = false;
-                            let encodingsM3u8 = await encodingsM3u8Response.text();
+                            let encodingsM3u8 = resolvePlaylistUrls(await encodingsM3u8Response.text(), encodingsM3u8Response.url || urlInfo.href);
                             const streamM3u8Url = getStreamUrlForResolution(encodingsM3u8, resolutionInfo);
                             const streamM3u8Response = await realFetch(streamM3u8Url);
                             if (streamM3u8Response.status === 200) {
-                                const backTextStr = await streamM3u8Response.text();
+                                const backTextStr = resolvePlaylistUrls(await streamM3u8Response.text(), streamM3u8Response.url || streamM3u8Url);
                                 if ((!hasAdTags(backTextStr) && (SimulatedAdsDepth == 0 || i >= SimulatedAdsDepth - 1)) || i >= playerTypes.length - 1) {
                                     result = backTextStr;
                                     backupPlayerTypeInfo = ' (' + playerType + ')';
@@ -593,6 +595,7 @@
         let hasStrippedAdSegments = false;
         let inCueOut = false;
         const liveSegments = [];
+        let segmentNumber = -1;
         const lines = textStr.split(/\r?\n/);
         const newAdUrl = 'https://twitch.tv';
         // Log ad tracking attribute names once per stream (helps identify new beacons)
@@ -629,6 +632,7 @@
         }
         for (let i = 0; i < lines.length; i++) {
             let line = lines[i];
+            if (line.startsWith('#EXTINF')) segmentNumber++;
             // Track SCTE-35 CUE-OUT/CUE-IN ad boundaries
             if (line.includes('EXT-X-CUE-OUT')) {
                 if (!inCueOut) {
@@ -656,7 +660,7 @@
                 hasStrippedAdSegments = true;
                 streamInfo.NumStrippedAdSegments++;
             } else if (i < lines.length - 1 && line.startsWith('#EXTINF') && line.includes(',live')) {
-                liveSegments.push({ extinf: line, url: lines[i + 1] });
+                liveSegments.push({ extinf: line, url: lines[i + 1], number: segmentNumber, index: i });
             } else if (line.startsWith('#EXT-X-PART:')) {
                 // LL-HLS part: URI is inline as an attribute. Strip if it matches a known
                 // ad URL (already in cache from a parallel EXTINF strip, or matches a URL pattern).
@@ -708,14 +712,31 @@
         } else {
             streamInfo.NumStrippedAdSegments = 0;
         }
-        // Cache live segments for recovery (plus the MEDIA-SEQUENCE of the oldest cached segment,
-        // so the player accepts injected recovery segments as the correct position in the stream)
+        // Keep a contiguous run: removed ads still occupy sequence numbers in the source.
         if (liveSegments.length > 0) {
-            streamInfo.RecoverySegments = liveSegments.slice(-6);
-            const seq = parseInt((textStr.match(/#EXT-X-MEDIA-SEQUENCE:(\d+)/) || [])[1]);
-            if (!isNaN(seq)) {
-                streamInfo.RecoveryStartSeq = seq + Math.max(0, liveSegments.length - streamInfo.RecoverySegments.length);
+            let first = liveSegments.length - 1;
+            while (first > 0 && liveSegments[first].number === liveSegments[first - 1].number + 1) first--;
+            streamInfo.RecoverySegments = liveSegments.slice(Math.max(first, liveSegments.length - 6));
+            const start = streamInfo.RecoverySegments[0];
+            const end = streamInfo.RecoverySegments[streamInfo.RecoverySegments.length - 1];
+            const seq = Number((textStr.match(/#EXT-X-MEDIA-SEQUENCE:(\d+)/) || [])[1] || 0);
+            streamInfo.RecoveryStartSeq = seq + start.number;
+            // Cache the original metadata too. A later ad playlist can use different
+            // encryption keys, init maps and discontinuity counters than this content.
+            let bodyStart = start.index;
+            while (bodyStart > 0 && (lines[bodyStart - 1].startsWith('#') || !lines[bodyStart - 1].trim())) bodyStart--;
+            const before = lines.slice(0, bodyStart);
+            const headers = lines.filter(line => /^#EXTM3U$|^#EXT-X-(?:VERSION|TARGETDURATION|INDEPENDENT-SEGMENTS)(?::|$)/.test(line));
+            const discontinuitySeq = Number((textStr.match(/#EXT-X-DISCONTINUITY-SEQUENCE:(\d+)/) || [])[1] || 0)
+                + before.filter(line => line === '#EXT-X-DISCONTINUITY').length;
+            headers.push('#EXT-X-MEDIA-SEQUENCE:' + streamInfo.RecoveryStartSeq, '#EXT-X-DISCONTINUITY-SEQUENCE:' + discontinuitySeq);
+            for (const tag of ['#EXT-X-KEY:', '#EXT-X-MAP:']) {
+                const active = lines.slice(0, start.index).filter(line => line.startsWith(tag)).pop();
+                if (active) headers.push(active);
             }
+            const body = lines.slice(bodyStart, end.index + 2).filter(line =>
+                (line.trim() && !line.startsWith('#')) || /^#EXTINF:|^#EXT-X-(?:KEY|MAP|PROGRAM-DATE-TIME|BYTERANGE|DISCONTINUITY|GAP)(?::|$)/.test(line));
+            streamInfo.RecoveryM3U8 = [...headers, ...body].join('\n');
         }
         // If all segments were stripped, try to prevent black screen via recovery content.
         // Prefer the full-playlist snapshot from a recent non-ad poll (mirrors TTV-AB
@@ -748,18 +769,14 @@
             // Fallback: per-segment recovery cache (existing behavior)
             if (streamInfo.RecoverySegments && streamInfo.RecoverySegments.length > 0) {
                 console.log('[AD DEBUG] All segments stripped — restoring ' + streamInfo.RecoverySegments.length + ' recovery segments');
-                if (streamInfo.RecoveryStartSeq !== undefined) {
-                    for (let j = 0; j < lines.length; j++) {
-                        if (lines[j].startsWith('#EXT-X-MEDIA-SEQUENCE:')) {
-                            lines[j] = '#EXT-X-MEDIA-SEQUENCE:' + streamInfo.RecoveryStartSeq;
-                            break;
-                        }
-                    }
-                }
-                for (let j = 0; j < streamInfo.RecoverySegments.length; j++) {
-                    lines.push(streamInfo.RecoverySegments[j].extinf);
-                    lines.push(streamInfo.RecoverySegments[j].url);
-                }
+                // Replace the ad media section instead of appending cached content after it.
+                // Otherwise each retained ad entry shifts the cached segment's sequence number.
+                const recovery = streamInfo.RecoveryM3U8 || [
+                    ...lines.filter(line => /^#EXTM3U$|^#EXT-X-(?:VERSION|TARGETDURATION)(?::|$)/.test(line)),
+                    '#EXT-X-MEDIA-SEQUENCE:' + (streamInfo.RecoveryStartSeq || 0),
+                    ...streamInfo.RecoverySegments.flatMap(segment => [segment.extinf, segment.url])
+                ].join('\n');
+                lines.splice(0, lines.length, ...recovery.split('\n'));
             }
         }
         streamInfo.IsStrippingAdSegments = hasStrippedAdSegments;
@@ -825,7 +842,7 @@
             const streamM3u8Url = streamInfo.Encodings.match(/^https:.*\.m3u8$/m)?.[0];
             const streamM3u8Response = await realFetch(streamM3u8Url);
             if (streamM3u8Response.status == 200) {
-                const streamM3u8 = await streamM3u8Response.text();
+                const streamM3u8 = resolvePlaylistUrls(await streamM3u8Response.text(), streamM3u8Response.url || streamM3u8Url);
                 if (streamM3u8 != null) {
                     if (!hasAdTags(streamM3u8) && SimulatedAdsDepth == 0) {
                         // Mark first candidate-end timestamp on the first clean main-stream poll seen this
@@ -950,6 +967,18 @@
         updateAdblockBannerForStream(streamInfo);
         return textStr;
     }
+    // Resolve against the fetched playlist, including redirects and inline HLS URIs.
+    function resolvePlaylistUrls(textStr, playlistUrl) {
+        const resolve = uri => {
+            try { return new URL(uri, playlistUrl).href; } catch { return uri; }
+        };
+        return textStr.split(/\r?\n/).map(line => {
+            if (!line.startsWith('#')) return line.trim() ? resolve(line.trim()) : line;
+            const prefetch = '#EXT-X-TWITCH-PREFETCH:';
+            if (line.startsWith(prefetch)) return prefetch + resolve(line.slice(prefetch.length).trim());
+            return line.replace(/([,:])URI="([^"]+)"/g, (_, prefix, uri) => prefix + 'URI="' + resolve(uri) + '"');
+        }).join('\n');
+    }
     function hookWorkerFetch() {
         console.log('[AD DEBUG] hookWorkerFetch (video-swap-new)');
         const realFetch = fetch;
@@ -969,7 +998,7 @@
                     return new Promise(function(resolve, reject) {
                         const processAfter = async function(response) {
                             if (response.status === 200) {
-                                const str = await processM3U8(url, await response.text(), realFetch);
+                                const str = await processM3U8(url, resolvePlaylistUrls(await response.text(), response.url || url), realFetch);
                                 resolve(new Response(str, {
                                     status: response.status,
                                     statusText: response.statusText,
@@ -1010,14 +1039,14 @@
                             StreamInfos[channelName] = streamInfo = createStreamInfo(channelName, (new URL(url)).search);
                             const encodingsM3u8Response = await realFetch(url, options);
                             if (encodingsM3u8Response != null && encodingsM3u8Response.status === 200) {
-                                const encodingsM3u8 = await encodingsM3u8Response.text();
+                                const encodingsM3u8 = resolvePlaylistUrls(await encodingsM3u8Response.text(), encodingsM3u8Response.url || url);
                                 streamInfo.Encodings = encodingsM3u8;
                                 setStreamInfoUrls(streamInfo, encodingsM3u8);
                                 serverTime = getServerTimeFromM3u8(encodingsM3u8);
                                 const resolutionInfo = streamInfo.Urls.values().next().value;
                                 const streamM3u8Response = await realFetch(resolutionInfo.Url);
                                 if (streamM3u8Response.status == 200) {
-                                    const streamM3u8 = await streamM3u8Response.text();
+                                    const streamM3u8 = resolvePlaylistUrls(await streamM3u8Response.text(), streamM3u8Response.url || resolutionInfo.Url);
                                     if (hasAdTags(streamM3u8) || SimulatedAdsDepth > 0) {
                                         await onFoundAd(streamInfo, streamM3u8, false, realFetch, resolutionInfo.Url, resolutionInfo);
                                     }
