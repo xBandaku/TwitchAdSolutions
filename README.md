@@ -98,6 +98,30 @@ Tests check syntax, metadata, matching userscript/uBlock logic, serialized worke
 
 Browser tests use offline Twitch fixtures in Chromium, Firefox, and WebKit. Windows WebKit skips PCM media cases; Linux CI runs them. Live ads and extension installation need manual testing.
 
+### Test evidence
+
+`npm test` runs captured-response checks first, then synthetic resilience tests and repository checks. Run `npm run test:captured` or `npm run test:resilience` separately when needed. Browser tests are labeled synthetic unless they replay a recorded response.
+
+Captured fixtures contain sanitized master and media playlists, capture time, endpoint, player type, request parameters, HTTP status, final URL, redirect history, and redaction notes. Tests verify body hashes and report whether enhanced-codec rewriting and the missing-resolution guard were exercised. Successful requests without the trigger do not validate those paths.
+
+To capture a currently live channel, run:
+
+```sh
+npm run capture:playlist -- CHANNEL tests/fixtures/captured/NEW-CAPTURE.json popout v2
+```
+
+Use a lowercase channel login and a new filename. The command makes anonymous live requests, redacts tokens and identifying metadata, and refuses to overwrite a fixture. Review redactions before committing. Normal tests replay committed files without network access. Keep hypothetical redirects and missing-field mutations in synthetic tests; do not edit captures to manufacture a trigger.
+
+Findings and PRs must state `confirmed live`, `reproduced from a captured response`, or `synthetic edge case`, plus any missing evidence. Offline replay does not prove live playback impact. Synthetic-only fixes are preventive hardening.
+
+Verify each regression against its pre-fix source and the working tree. For the missing-resolution case:
+
+```sh
+npm run test:regression -- ae97abc "preserves enhanced variants without resolution" "Cannot read properties of undefined (reading 'split')"
+```
+
+This command requires the selected tests to fail before the fix with the expected error and pass afterward. It does not change their evidence classification.
+
 ## Credits and license
 
 Fork of [ryanbr/TwitchAdSolutions](https://github.com/ryanbr/TwitchAdSolutions), originally based on [pixeltris/TwitchAdSolutions](https://github.com/pixeltris/TwitchAdSolutions).

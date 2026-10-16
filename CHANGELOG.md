@@ -1,7 +1,7 @@
 ## v68.5.30 (2026-10-16)
 
-- Skip AVC rewriting for HEVC and AV1 variants without resolution metadata. Preserve those entries so a missing optional field cannot reject the master-playlist fetch.
-- Add regression coverage for mixed AVC and enhanced-codec playlists in both vaft install formats.
+- Preventive hardening: skip AVC rewriting for HEVC and AV1 variants without resolution metadata. Preserve those entries so a missing optional field cannot reject the master-playlist fetch. Reproduced with synthetic inputs; current Twitch playback impact is unconfirmed.
+- Add synthetic resilience coverage for mixed AVC and enhanced-codec playlists in both vaft install formats.
 - Versions: vaft 68.5.30 (internal 115).
 
 ## v68.5.29 (2026-10-15)

@@ -1,9 +1,11 @@
-// Unit tests for TwitchAdSolutions
+// Synthetic resilience tests for TwitchAdSolutions
 // Run: node tests/test.js
 
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+
+console.log('Synthetic resilience: fabricated inputs, not production evidence.');
 
 let passed = 0;
 let failed = 0;

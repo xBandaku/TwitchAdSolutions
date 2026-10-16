@@ -1,8 +1,62 @@
 const { test, expect } = require('@playwright/test');
+const fs = require('node:fs');
+const path = require('node:path');
 const { scripts, readScript } = require('./scripts');
 
 const states = new WeakMap();
 const cleanPlaylist = '#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2.000,live\nhttps://www.twitch.tv/fixtures/live.ts\n';
+
+const capturedDirectory = path.join(__dirname, 'fixtures/captured');
+for (const name of fs.readdirSync(capturedDirectory).filter(file => file.endsWith('.json'))) {
+    const capture = JSON.parse(fs.readFileSync(path.join(capturedDirectory, name), 'utf8'));
+    for (const file of ['vaft/vaft.user.js', 'vaft/vaft-ublock-origin.js']) {
+        test('captured response: ' + name + ' replays in the injected worker for ' + file, async ({ page, context }, testInfo) => {
+            await boot(page, context, file);
+            for (const exchange of [capture.master, capture.media]) {
+                for (const hop of exchange.response.redirectHistory) {
+                    await context.route(url => url.href === hop.url, route => route.fulfill({
+                        status: hop.status, headers: { location: hop.location, 'access-control-allow-origin': '*' }
+                    }));
+                }
+                await context.route(url => url.href === exchange.response.finalUrl, route => route.fulfill({
+                    status: exchange.response.status, headers: { ...exchange.response.headers, 'access-control-allow-origin': '*' },
+                    body: exchange.response.body
+                }));
+            }
+            const result = await page.evaluate(async ({ masterUrl, mediaUrl }) => {
+                const source = `
+                    (async () => {
+                        try {
+                            const master = await fetch(${JSON.stringify(masterUrl)});
+                            const masterBody = await master.text();
+                            const media = await fetch(${JSON.stringify(mediaUrl)});
+                            self.postMessage({ captured: true, masterStatus: master.status, masterBody,
+                                mediaStatus: media.status, mediaBody: await media.text(),
+                                resolutions: ActiveStreamInfo.ResolutionList.length,
+                                rewriteRan: ActiveStreamInfo.ModifiedM3U8 !== null });
+                        } catch (error) { self.postMessage({ captured: true, error: error.message }); }
+                    })();
+                `;
+                const worker = new Worker(URL.createObjectURL(new Blob([source], { type: 'text/javascript' })));
+                try {
+                    return await new Promise((resolve, reject) => {
+                        worker.addEventListener('message', event => { if (event.data.captured) resolve(event.data); });
+                        worker.addEventListener('error', event => reject(new Error(event.message)), { once: true });
+                    });
+                } finally { worker.terminate(); }
+            }, { masterUrl: capture.master.request.url, mediaUrl: capture.media.request.url });
+            expect(result.error).toBeUndefined();
+            expect(result.masterStatus).toBe(capture.master.response.status);
+            expect(result.mediaStatus).toBe(capture.media.response.status);
+            expect(result.masterBody).toContain('#EXTM3U');
+            expect(result.mediaBody).toContain('#EXTM3U');
+            expect(result.resolutions).toBe(capture.master.coverage.withResolution);
+            expect(result.rewriteRan).toBe(capture.master.coverage.avcWithResolution > 0 && capture.master.coverage.enhancedWithResolution > 0);
+            testInfo.annotations.push({ type: 'evidence', description: 'Captured response replay on a synthetic page with a scripted worker consumer and CORS headers. No live playback reproduction.' });
+            testInfo.annotations.push({ type: 'coverage', description: 'Enhanced-codec rewrite: ' + (result.rewriteRan ? 'exercised' : 'NOT EXERCISED') });
+        });
+    }
+}
 
 async function boot(page, context, file, url = 'https://www.twitch.tv/fixture-channel') {
     const state = { errors: [], unexpected: [], requests: [], logs: [] };
@@ -172,7 +226,7 @@ test.afterEach(async ({ page }, testInfo) => {
 
 for (const script of scripts) {
     if (script.file.startsWith('vaft/vaft')) {
-        test(script.file + ' runs shared recovery helpers inside the injected worker', async ({ page, context }) => {
+        test('synthetic resilience: ' + script.file + ' runs shared recovery helpers inside the injected worker', async ({ page, context }) => {
             await boot(page, context, script.file);
             const result = await page.evaluate(async () => {
                 const source = `
@@ -220,7 +274,7 @@ for (const script of scripts) {
             })) });
         });
 
-        test(script.file + ' honors a worker hard reset near the native live edge', async ({ page, context }) => {
+        test('synthetic resilience: ' + script.file + ' honors a worker hard reset near the native live edge', async ({ page, context }) => {
             await bootRecovery(page, context, script.file);
             await page.evaluate(() => { window.__recoveryFixture.current.video.currentTime = 17; });
             await expect.poll(() => page.evaluate(() => {
@@ -237,7 +291,7 @@ for (const script of scripts) {
             }))).toEqual({ reloads: [{ isNewMediaPlayerInstance: true, refreshAccessToken: true }], originalConnected: false });
         });
 
-        test(script.file + ' recovers a frozen native ad backup without stripped segments', async ({ page, context }) => {
+        test('synthetic resilience: ' + script.file + ' recovers a frozen native ad backup without stripped segments', async ({ page, context }) => {
             await bootRecovery(page, context, script.file);
             await page.clock.runFor(600);
             const baseline = await page.evaluate(() => window.__recoveryFixture.current.video.currentTime);
@@ -267,7 +321,7 @@ for (const script of scripts) {
         });
 
         for (const navigateDuringRecovery of [false, true]) {
-            test(script.file + ' recovers the Drops mini-player, navigation during recovery=' + navigateDuringRecovery, async ({ page, context }) => {
+            test('synthetic resilience: ' + script.file + ' recovers the Drops mini-player, navigation during recovery=' + navigateDuringRecovery, async ({ page, context }) => {
                 await bootRecovery(page, context, script.file);
                 if (!navigateDuringRecovery) await page.evaluate(() => history.pushState({}, '', '/drops/inventory'));
                 await page.evaluate(() => window.__recoveryFixture.reload('early'));
@@ -290,7 +344,7 @@ for (const script of scripts) {
         }
 
         for (const userMute of [false, true]) {
-            test(script.file + ' rolls back failed native-video recovery, user mute=' + userMute, async ({ page, context }) => {
+            test('synthetic resilience: ' + script.file + ' rolls back failed native-video recovery, user mute=' + userMute, async ({ page, context }) => {
                 await bootRecovery(page, context, script.file);
                 await page.evaluate(async userMute => {
                     const fixture = window.__recoveryFixture;
@@ -308,7 +362,7 @@ for (const script of scripts) {
             });
         }
 
-        test(script.file + ' resumes and unmutes the replacement native video', async ({ page, context }) => {
+        test('synthetic resilience: ' + script.file + ' resumes and unmutes the replacement native video', async ({ page, context }) => {
             await bootRecovery(page, context, script.file);
             await page.evaluate(() => window.__recoveryFixture.reload('early'));
             await expect.poll(() => page.evaluate(() => window.__recoveryFixture.current.video.readyState)).toBeGreaterThanOrEqual(2);
@@ -328,7 +382,7 @@ for (const script of scripts) {
             })).toEqual({ native: true, muted: false, paused: false, originalPlays: 0, replacementPlays: 1, originalConnected: false, reloads: 1, adMuted: true });
         });
 
-        test(script.file + ' upgrades overlapping soft and hard browser recovery', async ({ page, context }) => {
+        test('synthetic resilience: ' + script.file + ' upgrades overlapping soft and hard browser recovery', async ({ page, context }) => {
             await bootRecovery(page, context, script.file);
             await page.evaluate(async () => {
                 window.reloadTwitchPlayer();
@@ -345,7 +399,7 @@ for (const script of scripts) {
         });
 
         for (const reason of ['pause', 'pip']) {
-            test(script.file + ' cancels native-video recovery for ' + reason, async ({ page, context }) => {
+            test('synthetic resilience: ' + script.file + ' cancels native-video recovery for ' + reason, async ({ page, context }) => {
                 await bootRecovery(page, context, script.file);
                 await page.clock.runFor(600);
                 await page.evaluate(async () => {
@@ -365,7 +419,7 @@ for (const script of scripts) {
             });
         }
 
-        test(script.file + ' handles optional GQL headers and v2 worker playlist failures', async ({ page, context }) => {
+        test('synthetic resilience: ' + script.file + ' handles optional GQL headers and v2 worker playlist failures', async ({ page, context }) => {
             await boot(page, context, script.file);
             const result = await page.evaluate(async () => {
                 for (const input of ['https://gql.twitch.tv/gql', new URL('https://gql.twitch.tv/gql'), new Request('https://gql.twitch.tv/gql')]) {
@@ -406,7 +460,7 @@ for (const script of scripts) {
         });
     }
 
-    test(script.file + ' boots once and preserves ordinary fetch and reused XHR', async ({ page, context }) => {
+    test('synthetic resilience: ' + script.file + ' boots once and preserves ordinary fetch and reused XHR', async ({ page, context }) => {
         await boot(page, context, script.file);
         const result = await page.evaluate(async source => {
             const version = window.twitchAdSolutionsVersion ?? window.twitchBraveFixVersion;
@@ -438,7 +492,7 @@ for (const script of scripts) {
     });
 
     if (!script.file.startsWith('strip/')) {
-        test(script.file + ' leaves Twitch clip pages untouched', async ({ page, context }) => {
+        test('synthetic resilience: ' + script.file + ' leaves Twitch clip pages untouched', async ({ page, context }) => {
             await boot(page, context, script.file, 'https://www.twitch.tv/fixture-channel/clip/fixture');
             expect(await page.evaluate(() => ({
                 version: window.twitchAdSolutionsVersion ?? window.twitchBraveFixVersion ?? null,
@@ -449,7 +503,7 @@ for (const script of scripts) {
     }
 
     if (script.file.includes('ublock-origin')) {
-        test(script.file + ' ignores non-Twitch origins', async ({ page, context }) => {
+        test('synthetic resilience: ' + script.file + ' ignores non-Twitch origins', async ({ page, context }) => {
             await boot(page, context, script.file, 'https://example.com/fixture');
             expect(await page.evaluate(() => ({
                 version: window.twitchAdSolutionsVersion ?? window.twitchBraveFixVersion ?? null,
@@ -460,7 +514,7 @@ for (const script of scripts) {
     }
 
     if (script.worker) {
-        test(script.file + ' runs its injected worker and replaces cached ad media', async ({ page, context }) => {
+        test('synthetic resilience: ' + script.file + ' runs its injected worker and replaces cached ad media', async ({ page, context }) => {
             const state = await boot(page, context, script.file);
             const result = await page.evaluate(async () => {
                 const source = `
@@ -511,7 +565,7 @@ for (const script of scripts) {
 }
 
 for (const file of scripts.filter(script => script.file.includes('brave-fix')).map(script => script.file)) {
-    test(file + ' masks Brave fingerprint properties', async ({ page, context }) => {
+    test('synthetic resilience: ' + file + ' masks Brave fingerprint properties', async ({ page, context }) => {
         await boot(page, context, file);
         expect(await page.evaluate(async () => ({
             braveHidden: navigator.brave === undefined,
@@ -523,7 +577,7 @@ for (const file of scripts.filter(script => script.file.includes('brave-fix')).m
 
 for (const file of ['vaft/vaft.user.js', 'vaft/vaft-ublock-origin.js',
     'video-swap-new/video-swap-new.user.js', 'video-swap-new/video-swap-new-ublock-origin.js']) {
-    test(file + ' preserves recovery numbering and blocks relative ad media inside its injected worker', async ({ page, context }) => {
+    test('synthetic resilience: ' + file + ' preserves recovery numbering and blocks relative ad media inside its injected worker', async ({ page, context }) => {
         const state = await boot(page, context, file);
         await context.route('https://www.twitch.tv/fixtures/relative.m3u8', route => route.fulfill({
             contentType: 'application/vnd.apple.mpegurl',
@@ -578,7 +632,7 @@ for (const file of ['vaft/vaft.user.js', 'vaft/vaft-ublock-origin.js',
 
 for (const url of ['https://gql.twitch.tv/gql', 'https://gql.twitch.tv/integrity', 'https://passport.twitch.tv/integrity']) {
     for (const requestInput of [false, true]) {
-        test('Brave userscript retries a rejected ' + (requestInput ? 'Request' : 'URL') + ' at ' + url + ' through the manager transport', async ({ page, context }) => {
+        test('synthetic resilience: Brave userscript retries a rejected ' + (requestInput ? 'Request' : 'URL') + ' at ' + url + ' through the manager transport', async ({ page, context }) => {
             await boot(page, context, 'vaft/twitch-brave-fix.user.js');
             await context.route(url, route => route.fulfill({ contentType: 'application/json', body: '{"errors":[{"message":"failed integrity check"}]}' }));
             const result = await page.evaluate(async ({ requestInput, url }) => {
@@ -596,7 +650,7 @@ for (const url of ['https://gql.twitch.tv/gql', 'https://gql.twitch.tv/integrity
     }
 }
 
-test('Brave userscript preserves the original response when manager transport fails', async ({ page, context }) => {
+test('synthetic resilience: Brave userscript preserves the original response when manager transport fails', async ({ page, context }) => {
     await boot(page, context, 'vaft/twitch-brave-fix.user.js');
     expect(await page.evaluate(async () => {
         window.__gmFail = true;
@@ -609,7 +663,7 @@ for (const body of [
     { data: { fixtureMutation: { id: 'written-once' } }, errors: [{ message: 'failed integrity check' }] },
     { errors: [{ message: 'permission denied' }] }
 ]) {
-    test('Brave preserves successful operations and ordinary GraphQL errors: ' + JSON.stringify(body), async ({ page, context }) => {
+    test('synthetic resilience: Brave preserves successful operations and ordinary GraphQL errors: ' + JSON.stringify(body), async ({ page, context }) => {
         await boot(page, context, 'vaft/twitch-brave-fix.user.js');
         let nativeCalls = 0;
         await context.route('https://gql.twitch.tv/gql', async route => {
@@ -626,7 +680,7 @@ for (const body of [
 }
 
 for (const userscriptFirst of [false, true]) {
-    test('Brave retry survives both helper load orders, userscript first=' + userscriptFirst, async ({ page, context }) => {
+    test('synthetic resilience: Brave retry survives both helper load orders, userscript first=' + userscriptFirst, async ({ page, context }) => {
         const files = ['vaft/twitch-brave-fix.user.js', 'vaft/twitch-brave-fix-ublock-origin.js'];
         if (!userscriptFirst) files.reverse();
         await boot(page, context, files[0]);
@@ -638,7 +692,7 @@ for (const userscriptFirst of [false, true]) {
     });
 }
 
-test('Brave userscript aborts a pending manager request', async ({ page, context }) => {
+test('synthetic resilience: Brave userscript aborts a pending manager request', async ({ page, context }) => {
     await boot(page, context, 'vaft/twitch-brave-fix.user.js');
     await page.evaluate(() => {
         window.__gmPending = true;
@@ -652,7 +706,7 @@ test('Brave userscript aborts a pending manager request', async ({ page, context
     expect(await page.evaluate(() => window.__gmAborts)).toBe(1);
 });
 
-test('Brave userscript bounds a silent manager request', async ({ page, context }) => {
+test('synthetic resilience: Brave userscript bounds a silent manager request', async ({ page, context }) => {
     await page.clock.install();
     await boot(page, context, 'vaft/twitch-brave-fix.user.js');
     await page.evaluate(() => {
