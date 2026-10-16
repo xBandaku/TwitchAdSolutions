@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         TwitchAdSolutions (twitch-brave-fix)
 // @namespace    https://github.com/ryanbr/TwitchAdSolutions
-// @version      1.3.3
-// @description  Bypass Brave fingerprint detection on Twitch GQL/integrity requests by retrying via GM_xmlHttpRequest with header spoofs (Sec-Ch-Ua brand rewrite from Brave to Google Chrome with synthetic fallback when userAgentData hidden, Sec-Ch-Ua-Platform, Sec-Ch-Ua-Mobile, Firefox User-Agent, explicit Origin/Referer, Accept-Language). Also hides navigator.brave and rebrands navigator.userAgentData.brands / getHighEntropyValues from "Brave" to "Google Chrome" so Twitch JS can't preemptively flag the session. Per-request retry: each interceptable request goes native first, sniffs for `errors` in the response body, and retries that specific request via GM xhr if needed — fixes occasional fingerprint-driven failures (e.g. Brave login on www.twitch.tv) without paying the GM xhr tax on every successful request. Companion to vaft / video-swap-new. A uBlock Origin scriptlet variant (twitch-brave-fix-ublock-origin.js) is also available but covers JS-surface spoofs only — the GM xhr header-retry path is userscript-exclusive (Tampermonkey / Violentmonkey / Greasemonkey 4+).
+// @version      1.3.4
+// @description  Bypass Brave fingerprint detection on Twitch GQL/integrity requests by retrying via GM_xmlHttpRequest with header spoofs (Sec-Ch-Ua brand rewrite from Brave to Google Chrome with synthetic fallback when userAgentData hidden, Sec-Ch-Ua-Platform, Sec-Ch-Ua-Mobile, Firefox User-Agent, explicit Origin/Referer, Accept-Language). Also hides navigator.brave and rebrands navigator.userAgentData.brands / getHighEntropyValues from "Brave" to "Google Chrome" so Twitch JS can't preemptively flag the session. Per-request retry: each interceptable request goes native first, retries explicit integrity rejections via GM xhr only when the entire response has no data or ordinary GraphQL errors — fixes occasional fingerprint-driven failures (e.g. Brave login on www.twitch.tv) without paying the GM xhr tax on every successful request. Companion to vaft / video-swap-new. A uBlock Origin scriptlet variant (twitch-brave-fix-ublock-origin.js) is also available but covers JS-surface spoofs only — the GM xhr header-retry path is userscript-exclusive (Tampermonkey / Violentmonkey / Greasemonkey 4+).
 // @updateURL    https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/twitch-brave-fix.user.js
 // @downloadURL  https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/twitch-brave-fix.user.js
 // @author       https://github.com/ryanbr/TwitchAdSolutions
@@ -27,8 +27,8 @@
         if (_clipHost === 'clips.twitch.tv' || /^\/[^/]+\/clip\/[^/]+/.test(_clipPath)) return;
     }
     'use strict';
-    const ourVersion = 7;
-    console.log('[TwitchBraveFix] v1.3.3 loading');
+    const ourVersion = 8;
+    console.log('[TwitchBraveFix] v1.3.4 loading');
     if (typeof window.twitchBraveFixRetryVersion !== 'undefined' && window.twitchBraveFixRetryVersion >= ourVersion) {
         console.log('[TwitchBraveFix] CONFLICT: skipped — another instance already active (v' + window.twitchBraveFixRetryVersion + ')');
         return;
@@ -260,6 +260,17 @@
         });
     }
 
+    // A GraphQL execution error is not evidence of fingerprint rejection. Replay
+    // only a wholly rejected response; even data:null can indicate partial execution.
+    function isIntegrityRejection(parsed) {
+        const responses = Array.isArray(parsed) ? parsed : [parsed];
+        return responses.length > 0 && responses.every(response =>
+            response && typeof response === 'object' && !('data' in response)
+            && Array.isArray(response.errors) && response.errors.length > 0
+            && response.errors.every(error => typeof error?.message === 'string'
+                && /^(?:failed (?:client )?integrity check|(?:client )?integrity check failed|invalid (?:client )?integrity token|fingerprint validation failed)[.!]?$/i.test(error.message.trim())));
+    }
+
     async function maybeRetryOnErrors(url, method, headers, response, readBody, signal) {
         if (response.status !== 200) return response;
         const cloned = response.clone();
@@ -267,13 +278,8 @@
         try { bodyTextResp = await cloned.text(); } catch (_e) { return response; }
         let parsed;
         try { parsed = JSON.parse(bodyTextResp); } catch (_e) { return response; }
-        // Twitch's tell: HTTP 200 with a top-level `errors` field means fingerprint validation failed.
-        // Genuine GQL responses are either `data` or an array of `data`-shaped objects; `errors` only
-        // appears when the request was rejected at the gateway level.
-        if (typeof parsed?.errors === 'undefined' && !(Array.isArray(parsed) && parsed.some(p => typeof p?.errors !== 'undefined'))) {
-            return response;
-        }
-        console.log('[TwitchBraveFix] GQL errors detected on ' + url.replace(/\?.*$/, '') + ' — retrying via GM_xmlHttpRequest with header spoofs');
+        if (!isIntegrityRejection(parsed)) return response;
+        console.log('[TwitchBraveFix] Integrity rejection detected on ' + url.replace(/\?.*$/, '') + ' — retrying via GM_xmlHttpRequest with header spoofs');
         // Body is only needed on the retry path — defer the clone-and-decode until now so the
         // happy path doesn't pay for it on every interceptable request.
         const bodyText = await readBody();
@@ -319,5 +325,5 @@
         }
     };
 
-    console.log('[TwitchBraveFix] window.fetch hook installed + navigator.brave hidden + userAgentData rebranded — per-request retry: native fetch first, retry via GM_xmlHttpRequest only when response carries `errors`');
+    console.log('[TwitchBraveFix] window.fetch hook installed + navigator.brave hidden + userAgentData rebranded — per-request retry: native fetch first, retry via GM_xmlHttpRequest only for wholly rejected integrity responses');
 })();
