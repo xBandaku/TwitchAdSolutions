@@ -39,6 +39,7 @@ jobs:
       run: |
         npm run lint
         python -m compileall -q .github
+        python -m unittest discover -s .github/scripts -p "test_*.py" -v
 
     - name: Validate workflows
       env:
@@ -187,8 +188,8 @@ jobs:
         GH_TOKEN: ${{ github.token }}
         DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         TAG: v${{ steps.release.outputs.version }}
-        GITHUB_EVENT_NAME: release
-        GITHUB_EVENT_ACTION: published
+        NOTIFICATION_EVENT_NAME: release
+        NOTIFICATION_EVENT_ACTION: published
       run: |
         gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '{action: "published", release: ., sender: .author}' > "$RUNNER_TEMP/release-event.json"
-        GITHUB_EVENT_PATH="$RUNNER_TEMP/release-event.json" python3 .github/scripts/discord_notify.py
+        NOTIFICATION_EVENT_PATH="$RUNNER_TEMP/release-event.json" python3 .github/scripts/discord_notify.py
