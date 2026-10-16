@@ -6,11 +6,11 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
-EVENT = os.environ["GITHUB_EVENT_NAME"]
-ACTION = os.environ.get("GITHUB_EVENT_ACTION", "")
+EVENT = os.environ.get("NOTIFICATION_EVENT_NAME") or os.environ["GITHUB_EVENT_NAME"]
+ACTION = os.environ.get("NOTIFICATION_EVENT_ACTION", os.environ.get("GITHUB_EVENT_ACTION", ""))
 REPO = os.environ["GITHUB_REPOSITORY"]
 WEBHOOK = os.environ.get("DISCORD_WEBHOOK_URL", "")
-with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as file:
+with open(os.environ.get("NOTIFICATION_EVENT_PATH") or os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as file:
     event = json.load(file)
 
 if not WEBHOOK:
@@ -85,7 +85,7 @@ actor = event.get("sender") or {}
 actor_name = actor.get("login") or os.environ.get("GITHUB_ACTOR", "GitHub")
 actor_avatar = actor.get("avatar_url")
 repo_url = f"https://github.com/{REPO}"
-github_icon = "https://github.githubassets.com/favicons/favicon.png"
+github_icon = "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png"
 title, description, fields = "", "", []
 category = "Repository activity"
 url = repo_url
@@ -125,7 +125,7 @@ elif EVENT == "pull_request":
     category = "Pull request"
     pr = event.get("pull_request") or {}
     number = pr.get("number", event.get("number", "?"))
-    status = "Merged" if pr.get("merged") else humanize(ACTION)
+    status = "Merged" if ACTION == "closed" and pr.get("merged") else humanize(ACTION)
     title = f"#{number} · {pr.get('title') or 'Untitled pull request'}"
     color = 0xA371F7 if pr.get("merged") else (0xF85149 if ACTION == "closed" else 0x58A6FF)
     if pr.get("draft") and not pr.get("merged") and ACTION != "closed":
@@ -249,6 +249,7 @@ payload = json.dumps({
     "embeds": [embed],
 }).encode("utf-8")
 
+print(f"Sending {EVENT} notification.")
 request = urllib.request.Request(
     WEBHOOK,
     data=payload,

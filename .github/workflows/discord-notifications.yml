@@ -34,6 +34,12 @@ on:
   check_suite:
     types: [completed]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Announce an existing published release, or leave blank for a connection preview
+        type: string
+        required: false
+        default: ''
 permissions:
   contents: read
 jobs:
@@ -44,13 +50,25 @@ jobs:
     steps:
       - name: Check out notification script
         uses: actions/checkout@v7
+      - name: Load published release for a manual announcement
+        if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.release_tag }}
+        run: |
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo '::error::Expected a stable release tag such as v68.5.29.'
+            exit 1
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '{action: "published", release: ., sender: .author}' > "$RUNNER_TEMP/release-event.json"
+          python3 -c 'import json,sys; release=json.load(open(sys.argv[1]))["release"]; sys.exit(0 if release.get("published_at") and not release.get("draft") else "Release is not published")' "$RUNNER_TEMP/release-event.json"
+          echo "event_path=$RUNNER_TEMP/release-event.json" >> "$GITHUB_OUTPUT"
       - name: Send Discord embed
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           GH_TOKEN: ${{ github.token }}
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
-          GITHUB_EVENT_ACTION: ${{ github.event.action }}
-          GITHUB_EVENT_PATH: ${{ github.event_path }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_ACTOR: ${{ github.actor }}
+          NOTIFICATION_EVENT_NAME: ${{ steps.release.outputs.event_path != '' && 'release' || github.event_name }}
+          NOTIFICATION_EVENT_ACTION: ${{ steps.release.outputs.event_path != '' && 'published' || github.event.action }}
+          NOTIFICATION_EVENT_PATH: ${{ steps.release.outputs.event_path || github.event_path }}
         run: python3 .github/scripts/discord_notify.py
