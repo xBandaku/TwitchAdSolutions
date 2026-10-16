@@ -2,7 +2,15 @@
 
 - Preventive hardening: skip AVC rewriting for HEVC and AV1 variants without resolution metadata. Preserve those entries so a missing optional field cannot reject the master-playlist fetch. Reproduced with synthetic inputs; current Twitch playback impact is unconfirmed.
 - Add synthetic resilience coverage for mixed AVC and enhanced-codec playlists in both vaft install formats.
+- Add sanitized live Twitch v1/v2 master and media captures with provenance, response hashes, and replay checks in Node and browser workers. Report when the relevant code paths were not exercised.
+- Separate captured-response evidence from synthetic resilience tests. Add capture and before/after regression commands, evidence requirements for findings and PRs, and clearer README instructions.
 - Versions: vaft 68.5.30 (internal 115).
+
+### Validation
+
+- Passed source and workflow lint, Node checks on Node 22/24 and Windows/Linux, and packaging verification for all seven scripts.
+- Passed Chromium, Firefox, and WebKit fixtures in Linux CI. Local Windows validation passed 187 browser tests with 20 WebKit PCM media cases skipped.
+- Verified that the synthetic missing-resolution regression fails before the fix with the expected error and passes afterward in both vaft formats. Current captures do not exercise enhanced-codec rewriting or redirected master playlists with relative URLs; neither scenario has a confirmed live playback reproduction.
 
 ## v68.5.29 (2026-10-15)
 
