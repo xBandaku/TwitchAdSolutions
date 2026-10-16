@@ -697,6 +697,26 @@ for (const file of files) {
         }
     });
 
+    test(file + ' preserves enhanced variants without resolution during AVC rewriting', async () => {
+        for (const codec of ['hvc1.1.6.L120', 'av01.0.08M.08']) {
+            const avcUrl = 'https://fixture.invalid/avc.m3u8';
+            const enhancedUrl = 'https://fixture.invalid/enhanced.m3u8';
+            const unknownUrl = 'https://fixture.invalid/no-resolution.m3u8';
+            const enhancedLine = '#EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=1920x1080,CODECS="' + codec + '"';
+            const unknownLine = '#EXT-X-STREAM-INF:BANDWIDTH=6000000,CODECS="' + codec + '"';
+            const master = '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1280x720,CODECS="avc1.4d4028"\n'
+                + avcUrl + '\n' + enhancedLine + '\n' + enhancedUrl + '\n' + unknownLine + '\n' + unknownUrl + '\n';
+            const { context } = harness(file, { fetch: async () => new Response(master) });
+            context.hookWorkerFetch();
+            const response = await context.fetch('https://usher.ttvnw.net/api/channel/hls/fixture.m3u8');
+            assert.equal(await response.text(), master);
+            const rewritten = context.StreamInfos.fixture.ModifiedM3U8;
+            assert.ok(rewritten.includes(enhancedLine.replace(codec, 'avc1.4d4028') + '\n' + avcUrl));
+            assert.ok(!rewritten.includes(enhancedUrl));
+            assert.ok(rewritten.includes(unknownLine + '\n' + unknownUrl + '\n'));
+        }
+    });
+
     test(file + ' rejects media and master playlist failures', async () => {
         for (const url of ['https://fixture.invalid/live.m3u8', 'https://usher.ttvnw.net/api/channel/hls/fixture.m3u8?token=fixture']) {
             const bodyError = new Error('fixture body failed');
