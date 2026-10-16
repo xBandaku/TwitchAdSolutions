@@ -37,7 +37,7 @@ twitch-videoad.js text/javascript
         }
     }
     'use strict';
-    const ourTwitchAdSolutionsVersion = 114;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 115;// Used to prevent conflicts with outdated versions of the scripts
     console.log('[AD DEBUG] TwitchAdSolutions vaft v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
         console.log('[AD DEBUG] CONFLICT: vaft v' + ourTwitchAdSolutionsVersion + ' skipped — another script already active (v' + window.twitchAdSolutionsVersion + '). Remove duplicate scripts.');
@@ -709,6 +709,7 @@ twitch-videoad.js text/javascript
                                                     const lineFamily = videoCodecFamily(resSettings[codecsKey]);
                                                     if (lineFamily === 'hevc' || lineFamily === 'av1') {
                                                         const oldResolution = resSettings['RESOLUTION'];
+                                                        if (!oldResolution) continue;
                                                         const [targetWidth, targetHeight] = oldResolution.split('x').map(Number);
                                                         const targetArea = targetWidth * targetHeight;
                                                         let newResolutionInfo = null;
