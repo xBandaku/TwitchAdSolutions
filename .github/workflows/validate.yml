@@ -2,12 +2,13 @@ name: Project checks
 
 on:
   push:
+    branches: [master]
     paths:
       - "**/*.js"
-      - ".github/workflows/**"
+      - "CHANGELOG.md"
+      - ".github/**"
       - "package*.json"
       - "eslint-suppressions.json"
-      - ".github/**/*.py"
   pull_request:
   workflow_dispatch:
 
@@ -42,12 +43,6 @@ jobs:
     - name: Test runtime regressions, metadata, syntax, and paired scripts
       run: npm test
 
-    - name: Lint JavaScript
-      run: npm run lint
-
-    - name: Compile repository Python scripts
-      run: python -m compileall -q .github
-
     - name: Verify installable artifacts
       if: matrix.os == 'ubuntu-latest' && matrix.node == '24'
       run: npm run test:package
@@ -70,10 +65,60 @@ jobs:
     - name: Validate every workflow with actionlint
       env:
         GH_TOKEN: ${{ github.token }}
-      run: |
-        mkdir -p "$RUNNER_TEMP/actionlint"
-        gh release download v1.7.12 --repo rhysd/actionlint --pattern actionlint_1.7.12_linux_amd64.tar.gz --pattern actionlint_1.7.12_checksums.txt --dir "$RUNNER_TEMP/actionlint"
-        cd "$RUNNER_TEMP/actionlint"
-        sha256sum --check --ignore-missing actionlint_1.7.12_checksums.txt
-        tar -xzf actionlint_1.7.12_linux_amd64.tar.gz
-        ./actionlint -color "$GITHUB_WORKSPACE"/.github/workflows/*.yml
+      run: bash .github/scripts/lint-workflows.sh
+
+  lint:
+    name: Source lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-node@v7
+      with:
+        node-version: '24'
+        cache: npm
+    - run: npm ci --ignore-scripts
+    - run: npm run lint
+    - run: python -m compileall -q .github
+
+  browser:
+    name: ${{ matrix.browser }} fixtures
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-node@v7
+      with:
+        node-version: '24'
+        cache: npm
+    - run: npm ci --ignore-scripts
+    - name: Install browser and system dependencies
+      run: npx playwright install --with-deps ${{ matrix.browser }}
+    - name: Run offline Twitch fixtures
+      run: npm run test:browser -- --project=${{ matrix.browser }}
+    - name: Upload browser reports and failure traces
+      if: ${{ !cancelled() }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: browser-results-${{ matrix.browser }}
+        path: |
+          playwright-report/
+          test-results/
+        if-no-files-found: error
+        retention-days: 7
+
+  release-tests:
+    name: release-tests
+    needs: validate
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+    - name: Require the matrix containing release tests to pass
+      env:
+        RESULT: ${{ needs.validate.result }}
+      run: test "$RESULT" = success

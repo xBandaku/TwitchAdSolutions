@@ -18,7 +18,7 @@ on:
   discussion_comment:
     types: [created, edited, deleted]
   release:
-    types: [published, unpublished, created, edited, deleted, prereleased, released]
+    types: [published]
   fork:
   watch:
     types: [started]
@@ -40,9 +40,10 @@ jobs:
   notify:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Check out notification script
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Send Discord embed
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}

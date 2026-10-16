@@ -30,9 +30,20 @@ jobs:
     - uses: actions/setup-node@v7
       with:
         node-version: '24'
+        cache: npm
 
     - name: Install test dependencies
       run: npm ci --ignore-scripts
+
+    - name: Lint source and compile notification script
+      run: |
+        npm run lint
+        python -m compileall -q .github
+
+    - name: Validate workflows
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: bash .github/scripts/lint-workflows.sh
 
     - name: Run unit tests
       run: npm test
@@ -167,3 +178,17 @@ jobs:
         make_latest: true
         draft: false
         prerelease: false
+
+    # GITHUB_TOKEN releases do not trigger the separate release event workflow.
+    - name: Announce published release
+      if: ${{ !cancelled() && success() && inputs.dry_run == false }}
+      continue-on-error: true
+      env:
+        GH_TOKEN: ${{ github.token }}
+        DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        TAG: v${{ steps.release.outputs.version }}
+        GITHUB_EVENT_NAME: release
+        GITHUB_EVENT_ACTION: published
+      run: |
+        gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '{action: "published", release: ., sender: .author}' > "$RUNNER_TEMP/release-event.json"
+        GITHUB_EVENT_PATH="$RUNNER_TEMP/release-event.json" python3 .github/scripts/discord_notify.py
