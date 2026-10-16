@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TwitchAdSolutions (strip) - BAD, DON'T USE THIS
 // @namespace    https://github.com/ryanbr/TwitchAdSolutions
-// @version      1.10
+// @version      1.11
 // @description  Multiple solutions for blocking Twitch ads (strip)
 // @updateURL    https://github.com/xBandaku/TwitchAdSolutions/raw/master/strip/strip.user.js
 // @downloadURL  https://github.com/xBandaku/TwitchAdSolutions/raw/master/strip/strip.user.js
@@ -13,7 +13,7 @@
 // ==/UserScript==
 (function() {
     'use strict';
-    const ourTwitchAdSolutionsVersion = 27;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 28;// Used to prevent conflicts with outdated versions of the scripts
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
         console.log("skipping strip as there's another script active. ourVersion:" + ourTwitchAdSolutionsVersion + " activeVersion:" + window.twitchAdSolutionsVersion);
         window.twitchAdSolutionsVersion = ourTwitchAdSolutionsVersion;
@@ -120,6 +120,7 @@
                 const alreadyHooked = prefetchedWorkerJs.includes('hookWorkerFetch');
                 const newBlobStr = `
                     ${stripAdSegments.toString()}
+                    ${resolvePlaylistUrls.toString()}
                     ${hookWorkerFetch.toString()}
                     ${declareOptions.toString()}
                     ${getWasmWorkerJs.toString()}
@@ -201,6 +202,18 @@
         req.send();
         return req.responseText;
     }
+    // Resolve against the fetched playlist, including redirects and inline HLS URIs.
+    function resolvePlaylistUrls(textStr, playlistUrl) {
+        const resolve = uri => {
+            try { return new URL(uri, playlistUrl).href; } catch { return uri; }
+        };
+        return textStr.split(/\r?\n/).map(line => {
+            if (!line.startsWith('#')) return line.trim() ? resolve(line.trim()) : line;
+            const prefetch = '#EXT-X-TWITCH-PREFETCH:';
+            if (line.startsWith(prefetch)) return prefetch + resolve(line.slice(prefetch.length).trim());
+            return line.replace(/([,:])URI="([^"]+)"/g, (_, prefix, uri) => prefix + 'URI="' + resolve(uri) + '"');
+        }).join('\n');
+    }
     function hookWorkerFetch() {
         console.log('hookWorkerFetch (strip)');
         const realFetch = fetch;
@@ -226,7 +239,7 @@
                     return new Promise(function(resolve, reject) {
                         const processAfter = async function(response) {
                             if (response.status === 200) {
-                                resolve(new Response(stripAdSegments(await response.text())));
+                                resolve(new Response(stripAdSegments(resolvePlaylistUrls(await response.text(), response.url || url))));
                             } else {
                                 resolve(response);
                             }
@@ -243,7 +256,7 @@
                         const processAfter = async function(response) {
                             if (response.status === 200) {
                                 const channelName = (new URL(url)).pathname.match(/([^\/]+)(?=\.\w+$)/)?.[0];
-                                let encodingsM3u8 = await response.text();
+                                let encodingsM3u8 = resolvePlaylistUrls(await response.text(), response.url || url);
                                 const cachedM3u8 = M3U8ChannelCache.get(channelName);
                                 if (cachedM3u8 && (await realFetch(cachedM3u8.match(/^https:.*\.m3u8$/m)?.[0])).status === 200) {
                                     encodingsM3u8 = replaceServerTimeInM3u8(cachedM3u8, getServerTimeFromM3u8(encodingsM3u8));
