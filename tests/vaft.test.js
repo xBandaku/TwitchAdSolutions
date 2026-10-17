@@ -100,6 +100,38 @@ function monitorHarness(file, hasPlayed = true) {
 }
 
 for (const file of files) {
+    for (const layout of ['empty', 'edge', 'gap']) {
+        test('synthetic resilience: ' + file + ' fast depleted-buffer recovery for ' + layout, () => {
+            const h = monitorHarness(file);
+            h.context.playerBufferState.inAdBreak = true;
+            h.advance(600);
+            h.context.playerBufferState.inAdBreak = false;
+            const video = h.current.player.video;
+            video.readyState = 2;
+            video.buffered = layout === 'empty' ? { length: 0 } : layout === 'gap'
+                ? { length: 1, start: () => video.currentTime + 5, end: () => video.currentTime + 15 }
+                : { length: 1, start: () => 0, end: () => video.currentTime + 0.001 };
+            h.advance(3000);
+            assert.equal(h.reloads.length, 0, 'must allow the full three-second observation window');
+            h.advance(1200);
+            assert.equal(h.reloads.length, 1, 'depleted buffer did not recover within four seconds plus monitor cadence');
+            h.context.doTwitchPlayerTask.recovery.cancel();
+        });
+    }
+
+    test('synthetic resilience: ' + file + ' retains the longer watchdog for usable buffered media', () => {
+        const h = monitorHarness(file);
+        h.context.playerBufferState.inAdBreak = true;
+        h.advance(600);
+        h.context.playerBufferState.inAdBreak = false;
+        h.current.player.video.readyState = 2;
+        h.advance(7000);
+        assert.equal(h.reloads.length, 0);
+        h.advance(2400);
+        assert.equal(h.reloads.length, 1);
+        h.context.doTwitchPlayerTask.recovery.cancel();
+    });
+
     test('synthetic resilience: ' + file + ' starts a required reset despite stale paused internals', () => {
         const h = recoveryHarness(file);
         h.current.player.video.paused = true;
@@ -172,7 +204,7 @@ for (const file of files) {
             h.advance(600);
             const deadline = h.context.playerBufferState.adPlaybackWatch.postBreakUntil;
             if (replacementAt === 'after-end') replace();
-            h.advance(9000);
+            h.advance(4800);
             assert.equal(h.reloads.length, 1, 'replacement lost the post-ad recovery context');
             assert.equal(h.context.playerBufferState.adPlaybackWatch.postBreakUntil, deadline, 'replacement extended the watch');
             h.advance(15000);
@@ -214,7 +246,7 @@ for (const file of files) {
         h.advance(600);
         h.context.playerBufferState.inAdBreak = false;
         h.context.playerBufferState.lastBackupSwitchAt = 101200;
-        h.advance(20000);
+        h.advance(15000);
         assert.equal(h.reloads.length, 1, 'post-ad depleted freeze never requested recovery');
         h.advance(60000);
         assert.equal(h.reloads.length, 2, 'only one bounded recovery runs for a frozen post-ad video');

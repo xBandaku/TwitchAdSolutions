@@ -1,3 +1,11 @@
+## v68.5.34 (2026-10-17)
+
+- Start vaft's ad and post-ad freeze recovery after 3 seconds without playhead progress when readiness is low and no more than 0.1 seconds is buffered at the current position. Keep the 8-second threshold for usable buffered media, existing switch/reload grace periods, pause and seek safeguards, and bounded retries. This reduces detection time; token fetch and player startup still add recovery time.
+- Add saved settings-button positions in all four corners and a hide option to vaft and video-swap-new. Apply presentation changes immediately. Alt+Shift+A reopens settings when hidden; reset restores the visible bottom-right button. Ignore the shortcut while typing or composing text.
+- Synthetic edge cases: verify empty buffers, buffer exhaustion and gaps request recovery sooner, while usable buffered media retains its observation window. Verify settings persistence, hiding, keyboard reopening, reset and focus in Chromium, Firefox and WebKit. Faster timing is not yet measured in a live Twitch freeze.
+- Validation: six targeted timing regressions fail at 103a11e for the expected reason and pass after the change. The four new UI tests fail against the old scripts because the position control is absent. Local Windows checks pass: lint, Node suites, seven-script packaging, four Python tests, and 240 browser fixtures (24 documented WebKit media skips). Manually verify corner positioning, hiding and shortcut reopening in connected Chrome on a local UI fixture.
+- Versions: vaft 68.5.34 (internal 119), video-swap-new 1.92 (internal 60). Other script versions are unchanged.
+
 ## v68.5.33 (2026-10-17)
 
 - Allow required early resets when stale paused internals disagree with a wrapper that reports playing. Explicit user pause and wrapper-confirmed pause still block recovery, and paused picture-in-picture playback remains protected.
