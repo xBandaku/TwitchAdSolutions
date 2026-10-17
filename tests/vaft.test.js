@@ -100,6 +100,31 @@ function monitorHarness(file, hasPlayed = true) {
 }
 
 for (const file of files) {
+    for (const replacementAt of ['before-end', 'at-end', 'after-end']) {
+        test('synthetic resilience: ' + file + ' preserves post-ad recovery across replacement ' + replacementAt, () => {
+            const h = monitorHarness(file);
+            h.context.playerBufferState.inAdBreak = true;
+            h.advance(600);
+            const replace = () => {
+                h.current.player.video = { ...h.current.player.video, currentTime: 0, readyState: 1, buffered: { length: 0 } };
+                h.current.player.getHTMLVideoElement = () => h.current.player.video;
+            };
+            if (replacementAt === 'before-end') { replace(); h.advance(600); }
+            h.context.playerBufferState.inAdBreak = false;
+            if (replacementAt === 'at-end') replace();
+            h.advance(600);
+            const deadline = h.context.playerBufferState.adPlaybackWatch.postBreakUntil;
+            if (replacementAt === 'after-end') replace();
+            h.advance(9000);
+            assert.equal(h.reloads.length, 1, 'replacement lost the post-ad recovery context');
+            assert.equal(h.context.playerBufferState.adPlaybackWatch.postBreakUntil, deadline, 'replacement extended the watch');
+            h.advance(15000);
+            replace();
+            h.advance(60000);
+            assert.equal(h.reloads.length, 2, 'replacement re-armed an exhausted recovery');
+        });
+    }
+
     test('synthetic resilience: ' + file + ' exports observed recovery outcomes and safe playback state', async () => {
         const h = recoveryHarness(file);
         h.window.__tasDiagnostics = { script: 'vaft', version: 'fixture', startedAt: 100000,

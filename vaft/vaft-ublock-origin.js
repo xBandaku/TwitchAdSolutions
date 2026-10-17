@@ -2428,19 +2428,25 @@ twitch-videoad.js text/javascript
                 playerBufferState.adPlaybackWatch = null;
             } else {
                 const channelName = getPlaybackChannelName(monitored);
+                const now = Date.now();
                 let watch = playerBufferState.adPlaybackWatch;
                 if (!watch || watch.video !== video || watch.channelName !== channelName) {
+                    const sameChannel = !!channelName && watch?.channelName === channelName;
+                    const channelHasPlayed = sameChannel && (watch.channelHasPlayed || watch.hasPlayed);
+                    const carryPostBreak = sameChannel && ((watch.inAdBreak && !playerBufferState.inAdBreak) || now < watch.postBreakUntil);
                     watch = playerBufferState.adPlaybackWatch = {
                         video, channelName, position: video.currentTime,
-                        hasPlayed: false, stalledAt: 0, reloadUsed: false,
-                        inAdBreak: !!playerBufferState.inAdBreak, postBreakUntil: 0
+                        hasPlayed: !!carryPostBreak && !!channelHasPlayed, channelHasPlayed: !!channelHasPlayed,
+                        stalledAt: 0, reloadUsed: !!carryPostBreak && watch.reloadUsed,
+                        inAdBreak: sameChannel ? watch.inAdBreak : !!playerBufferState.inAdBreak,
+                        postBreakUntil: sameChannel ? watch.postBreakUntil : 0
                     };
                 }
-                const now = Date.now();
                 if (watch.inAdBreak && !playerBufferState.inAdBreak) {
                     watch.postBreakUntil = now + 45000;
                     watch.stalledAt = 0;
                     watch.reloadUsed = false;
+                    watch.hasPlayed = watch.hasPlayed || watch.channelHasPlayed;
                 }
                 watch.inAdBreak = !!playerBufferState.inAdBreak;
                 const postBreakWatch = !watch.inAdBreak && now < watch.postBreakUntil;
@@ -2451,6 +2457,7 @@ twitch-videoad.js text/javascript
                 if (reset) watch.hasPlayed = false;
                 else if (advanced) {
                     watch.hasPlayed = true;
+                    watch.channelHasPlayed = true;
                     if (!recentReload && !doTwitchPlayerTask.recovery) watch.reloadUsed = false;
                 }
                 if (advanced || reset || !watch.hasPlayed || (!playerBufferState.inAdBreak && !postBreakWatch)
@@ -3195,6 +3202,7 @@ twitch-videoad.js text/javascript
         const allowedEvents = ['backup-attempt', 'backup-selected', 'ad-start', 'ad-end', 'reload-request', 'pause-play', 'worker-error', 'reload-start', 'recovery-finished'];
         if (!allowedEvents.includes(data.event)) return;
         if (data.event === 'backup-selected' && data.playerType === state.current.backup && data.quality === state.current.quality) return;
+        if (data.event === 'reload-request' || data.event === 'reload-start') state.current.recoveryOutcome = null;
         const entry = { atMs: Math.max(0, Date.now() - state.startedAt), event: data.event };
         if (data.event === 'reload-start' || data.event === 'recovery-finished') {
             entry.attempt = Number.isInteger(data.attempt) && data.attempt >= 0 && data.attempt <= 3 ? data.attempt : 0;
