@@ -512,6 +512,9 @@ function playbackContext(source) {
         state: { props: { content: { type: 'live' } } }
     };
     context.getPlayerAndState = () => context.playerAndState;
+    for (const name of ['updatePlayerPauseIntent', 'schedulePageRefreshFallback']) {
+        if (source.includes('function ' + name + '(')) vm.runInContext(scriptFunction(source, name), context);
+    }
     if (source.includes('function getPlaybackChannelName(')) {
         vm.runInContext(scriptFunction(source, 'getPlaybackChannelName'), context);
         vm.runInContext(scriptFunction(source, 'doTwitchPlayerTask'), context);

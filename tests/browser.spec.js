@@ -239,6 +239,50 @@ test.afterEach(async ({ page }, testInfo) => {
 
 for (const script of scripts) {
     if (script.file.startsWith('vaft/vaft')) {
+        test('synthetic resilience: ' + script.file + ' recovers after a native internal pause with a playing logical player', async ({ page, context }) => {
+            await bootRecovery(page, context, script.file);
+            await page.clock.runFor(600);
+            const baseline = await page.evaluate(() => window.__recoveryFixture.current.video.currentTime);
+            await expect.poll(() => page.evaluate(() => window.__recoveryFixture.current.video.currentTime)).toBeGreaterThan(baseline + 0.2);
+            await page.clock.runFor(600);
+            await page.evaluate(async () => {
+                const fixture = window.__recoveryFixture;
+                await fixture.adBreak();
+                fixture.current.isPaused = () => false;
+                fixture.current.core.paused = false;
+                fixture.current.video.pause();
+            });
+            await expect.poll(() => page.evaluate(() => window.twitchAdSolutionsTools.diagnostics().playback.userPauseIntent)).toBe(true);
+            await page.clock.runFor(350);
+            expect(await page.evaluate(() => window.twitchAdSolutionsTools.diagnostics().playback)).toMatchObject({ paused: true, playerPaused: false, corePaused: false, userPauseIntent: false });
+            await page.evaluate(() => window.__recoveryFixture.endAdBreak());
+            await page.evaluate(() => window.__recoveryFixture.reload('early'));
+            await page.clock.runFor(150);
+            expect(await page.evaluate(() => window.__recoveryFixture.reloads.length), JSON.stringify(await page.evaluate(() => window.twitchAdSolutionsTools.diagnostics()))).toBe(1);
+            expect(await page.evaluate(() => window.twitchAdSolutionsTools.diagnostics().events.some(event => event.event === 'pause-intent-cleared' && event.reason === 'player-playing'))).toBe(true);
+        });
+
+        test('synthetic resilience: ' + script.file + ' respects a trusted pause control despite stale logical playing flags', async ({ page, context }) => {
+            await bootRecovery(page, context, script.file);
+            await page.clock.runFor(600);
+            await page.evaluate(() => {
+                const fixture = window.__recoveryFixture;
+                fixture.current.isPaused = () => false;
+                fixture.current.core.paused = false;
+                const button = document.createElement('button');
+                button.textContent = 'Pause fixture';
+                button.dataset.aTarget = 'player-play-pause-button';
+                button.addEventListener('click', () => fixture.current.video.pause());
+                document.body.appendChild(button);
+            });
+            await page.getByRole('button', { name: 'Pause fixture', exact: true }).click();
+            await expect.poll(() => page.evaluate(() => window.twitchAdSolutionsTools.diagnostics().playback.userPauseIntent)).toBe(true);
+            await page.clock.runFor(20000);
+            expect(await page.evaluate(() => window.twitchAdSolutionsTools.diagnostics().playback)).toMatchObject({ paused: true, userPauseIntent: true });
+            await page.evaluate(() => window.__recoveryFixture.reload('early'));
+            expect(await page.evaluate(() => window.__recoveryFixture.reloads.length)).toBe(0);
+        });
+
         test('synthetic resilience: ' + script.file + ' exposes a disabled page-refresh option with reset support', async ({ page, context }) => {
             await boot(page, context, script.file);
             await page.getByRole('button', { name: 'Ad blocker settings', exact: true }).click();
