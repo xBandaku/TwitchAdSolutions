@@ -23,4 +23,27 @@ for (const file of ['vaft/vaft.user.js', 'vaft/vaft-ublock-origin.js',
         report.events.length = 0;
         assert.equal(window.__tasDiagnostics.events.length, 100, 'export must be a snapshot');
     });
+
+    if (file.startsWith('vaft/')) {
+        for (const event of ['reload-request', 'reload-start']) {
+            test('synthetic resilience: new ' + event + ' clears the previous outcome in ' + file, () => {
+                const window = { __tasDiagnostics: { startedAt: Date.now(), current: {}, events: [], render() {} } };
+                const context = createScriptContext(readScript(file), { window });
+                context.recordTASDiagnostic({ event: 'recovery-finished', success: true, reason: 'progress', attempt: 1 });
+                assert.equal(window.__tasDiagnostics.current.recoveryOutcome, 'progress-observed');
+                context.recordTASDiagnostic({ event, reason: 'early', attempt: 1, hardReload: true });
+                assert.equal(window.__tasDiagnostics.current.recoveryOutcome, null, 'new recovery retained stale outcome');
+            });
+        }
+
+        test('synthetic resilience: unchanged backup selections do not flood diagnostics in ' + file, () => {
+            const window = { __tasDiagnostics: { startedAt: Date.now(), current: {}, events: [], render() {} } };
+            const context = createScriptContext(readScript(file), { window });
+            for (let i = 0; i < 150; i++) context.recordTASDiagnostic({ event: 'backup-selected', playerType: 'autoplay', quality: '640x360' });
+            assert.equal(window.__tasDiagnostics.events.length, 1);
+            context.recordTASDiagnostic({ event: 'ad-end' });
+            context.recordTASDiagnostic({ event: 'backup-selected', playerType: 'autoplay', quality: '640x360' });
+            assert.equal(window.__tasDiagnostics.events.length, 3);
+        });
+    }
 }

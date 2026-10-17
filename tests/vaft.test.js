@@ -100,6 +100,88 @@ function monitorHarness(file, hasPlayed = true) {
 }
 
 for (const file of files) {
+    for (const replacementAt of ['before-end', 'at-end', 'after-end']) {
+        test('synthetic resilience: ' + file + ' preserves post-ad recovery across replacement ' + replacementAt, () => {
+            const h = monitorHarness(file);
+            h.context.playerBufferState.inAdBreak = true;
+            h.advance(600);
+            const replace = () => {
+                h.current.player.video = { ...h.current.player.video, currentTime: 0, readyState: 1, buffered: { length: 0 } };
+                h.current.player.getHTMLVideoElement = () => h.current.player.video;
+            };
+            if (replacementAt === 'before-end') { replace(); h.advance(600); }
+            h.context.playerBufferState.inAdBreak = false;
+            if (replacementAt === 'at-end') replace();
+            h.advance(600);
+            const deadline = h.context.playerBufferState.adPlaybackWatch.postBreakUntil;
+            if (replacementAt === 'after-end') replace();
+            h.advance(9000);
+            assert.equal(h.reloads.length, 1, 'replacement lost the post-ad recovery context');
+            assert.equal(h.context.playerBufferState.adPlaybackWatch.postBreakUntil, deadline, 'replacement extended the watch');
+            h.advance(15000);
+            replace();
+            h.advance(60000);
+            assert.equal(h.reloads.length, 2, 'replacement re-armed an exhausted recovery');
+        });
+    }
+
+    test('synthetic resilience: ' + file + ' exports observed recovery outcomes and safe playback state', async () => {
+        const h = recoveryHarness(file);
+        h.window.__tasDiagnostics = { script: 'vaft', version: 'fixture', startedAt: 100000,
+            current: {}, events: [], render() {} };
+        h.context.isActivelyStrippingAds = false;
+        h.current.player.core.state = { path: 'https://private.invalid/token=secret' };
+        h.current.player.video.networkState = 2;
+        h.current.player.video.error = { code: 3, message: 'secret media error' };
+        const recovery = h.context.doTwitchPlayerTask(false, true, 'early');
+        h.advance(13000);
+        assert.equal(await recovery, false);
+        const report = h.context.getTASDiagnostics();
+        assert.equal(report.events.filter(event => event.event === 'reload-start').length, 2);
+        assert.deepEqual(JSON.parse(JSON.stringify(report.events.at(-1))), {
+            atMs: 12000, event: 'recovery-finished', success: false, reason: 'timeout', attempt: 2
+        });
+        assert.equal(report.playback.available, true);
+        assert.equal(report.playback.recoveryActive, false);
+        assert.equal(report.playback.networkState, 2);
+        assert.equal(report.playback.mediaErrorCode, 3);
+        assert.ok(!JSON.stringify(report).includes('secret'));
+        assert.ok(!JSON.stringify(report).includes('private.invalid'));
+    });
+
+    test('synthetic resilience: ' + file + ' recovers a depleted frozen video after the ad ends', () => {
+        const h = monitorHarness(file);
+        h.context.playerBufferState.inAdBreak = true;
+        h.current.player.video.readyState = 1;
+        h.current.player.video.buffered = { length: 0 };
+        h.advance(600);
+        h.context.playerBufferState.inAdBreak = false;
+        h.context.playerBufferState.lastBackupSwitchAt = 101200;
+        h.advance(20000);
+        assert.equal(h.reloads.length, 1, 'post-ad depleted freeze never requested recovery');
+        h.advance(60000);
+        assert.equal(h.reloads.length, 2, 'only one bounded recovery runs for a frozen post-ad video');
+    });
+
+    test('synthetic resilience: ' + file + ' post-ad freeze watch respects pause, seek, progress and navigation', () => {
+        for (const reason of ['pause', 'intent', 'seek', 'progress', 'channel', 'startup']) {
+            const h = monitorHarness(file, reason !== 'startup');
+            h.context.playerBufferState.inAdBreak = true;
+            h.advance(600);
+            h.context.playerBufferState.inAdBreak = false;
+            h.current.player.video.readyState = 1;
+            if (reason === 'pause') h.current.player.video.paused = true;
+            if (reason === 'intent') h.context.playerBufferState.userPauseIntent = true;
+            if (reason === 'seek') h.current.player.video.seeking = true;
+            if (reason === 'channel') h.window.location.href = 'https://www.twitch.tv/other';
+            for (let i = 0; i < 100; i++) {
+                if (reason === 'progress') h.current.player.video.currentTime += 0.5;
+                h.advance(600);
+            }
+            assert.equal(h.reloads.length, 0, reason);
+        }
+    });
+
     test('synthetic resilience: ' + file + ' recovers a frozen ad backup without stripped segments or buffer gaps', async () => {
         for (const readyState of [2, 4]) {
             const h = monitorHarness(file);

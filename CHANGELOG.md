@@ -1,3 +1,11 @@
+## v68.5.32 (2026-10-17)
+
+- Preventive hardening for a full post-ad freeze: keep watching an already-playing video for 45 seconds after an ad ends. A depleted, non-advancing playhead can request bounded recovery after switch/reload grace periods, even with no current media data. Preserve observed playback, the watch deadline and its recovery budget across same-channel video replacements. Reset on navigation, respect pause intent and seeking, and do not treat initial loading as a stall.
+- Add actual reload-start and recovery-finished events to vaft diagnostics. Schema v2 includes a safe playback snapshot with video readiness, network state, buffer ranges, pause intent, media error code and recovery status. Exclude URLs, channel names, tokens, headers and error text. Deduplicate unchanged backup selections and clear previous outcomes when a new reload is requested.
+- A user-reported full audio/video freeze followed an autoplay backup and early reload request in v68.5.31. The old export did not record playback state or recovery outcomes, so it cannot establish that report's root cause. The related recovery gap is reproduced with synthetic inputs; no live playback fix is claimed.
+- Verify the synthetic regression fails against 34bc5e1 and passes in both vaft formats after the fix. Add browser fixtures for post-ad depletion and recovery outcome reporting.
+- Version: vaft 68.5.32 (internal 117). Other script versions are unchanged.
+
 ## v68.5.31 (2026-10-17)
 
 - Preventive hardening for eight synthetic edge cases: query-bearing media URLs, redirected master URL resolution, interrupted playlist-body reads, picture-by-picture GraphQL batches, omitted strip fetch options, drift correction across player replacement, unrelated-host header capture, and binary Brave retry bodies.
