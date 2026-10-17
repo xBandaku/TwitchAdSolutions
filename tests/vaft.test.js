@@ -85,9 +85,10 @@ function monitorHarness(file, hasPlayed = true) {
         position: 10, bufferedPosition: 40,
         path: 'https://usher.ttvnw.net/api/v2/channel/hls/fixture.m3u8?token=fixture'
     };
+    h.videoEvents = new Map();
     Object.assign(h.current.player.video, {
         readyState: 4, networkState: 1, seeking: false,
-        addEventListener() {}, buffered: { length: 1, start: () => 0, end: () => 40 }
+        addEventListener(name, callback) { h.videoEvents.set(name, callback); }, buffered: { length: 1, start: () => 0, end: () => 40 }
     });
     h.current.state.setSrc = options => {
         h.reloads.push(options);
@@ -101,6 +102,69 @@ function monitorHarness(file, hasPlayed = true) {
 }
 
 for (const file of files) {
+    test('synthetic resilience: ' + file + ' pause ownership clears a Twitch pause while its logical player is playing', () => {
+        const h = monitorHarness(file);
+        h.current.player.isPaused = () => false;
+        h.current.player.core.paused = false;
+        h.current.player.video.paused = true;
+        h.videoEvents.get('pause')();
+        assert.equal(h.context.playerBufferState.userPauseIntent, true, 'allow logical state to settle first');
+        h.advance(350);
+        assert.equal(h.context.playerBufferState.userPauseIntent, false, 'inferred pause intent blocked a playing logical player');
+        h.context.doTwitchPlayerTask(false, true, 'early');
+        assert.equal(h.reloads.length, 1);
+        h.context.doTwitchPlayerTask.recovery.cancel();
+    });
+
+    for (const event of ['pause', 'play']) {
+        test('synthetic resilience: ' + file + ' pause ownership ignores replaced-video ' + event, () => {
+            const h = monitorHarness(file);
+            const oldHandler = h.videoEvents.get(event);
+            const video = { ...h.current.player.video, __tasIntentHooked: false };
+            h.current.player.video = video;
+            h.current.player.getHTMLVideoElement = () => video;
+            h.context.monitorPlayerBuffering();
+            h.context.playerBufferState.userPauseIntent = event === 'play';
+            oldHandler();
+            assert.equal(h.context.playerBufferState.userPauseIntent, event === 'play', 'obsolete video changed active pause intent');
+        });
+    }
+
+    for (const source of ['pointer', 'keyboard', 'logical']) {
+        test('synthetic resilience: ' + file + ' pause ownership preserves deliberate ' + source + ' pause', () => {
+            const h = monitorHarness(file);
+            h.current.player.isPaused = () => source === 'logical';
+            h.current.player.core.paused = source === 'logical';
+            if (source !== 'logical') {
+                const event = source === 'pointer' ? { type: 'pointerdown', button: 0, target: { tagName: 'VIDEO' } }
+                    : { type: 'keydown', code: 'KeyK', target: { tagName: 'BODY' } };
+                h.listeners.get(event.type)({ isTrusted: true, ...event });
+                h.context.playerBufferState.weJustPaused = h.context.Date.now();
+            }
+            h.current.player.video.paused = true;
+            h.videoEvents.get('pause')();
+            h.advance(4000);
+            assert.equal(h.context.playerBufferState.userPauseIntent, true);
+            h.context.doTwitchPlayerTask(false, true, 'early');
+            assert.equal(h.reloads.length, 0);
+            h.videoEvents.get('play')();
+            assert.equal(h.context.playerBufferState.userPauseIntent, false);
+        });
+    }
+
+    test('synthetic resilience: ' + file + ' reconciles a late logical resume and does not treat typing as pause input', () => {
+        const h = monitorHarness(file);
+        h.current.player.isPaused = () => true;
+        h.current.player.video.paused = true;
+        h.listeners.get('keydown')({ isTrusted: true, type: 'keydown', code: 'Space', target: { tagName: 'INPUT' } });
+        h.videoEvents.get('pause')();
+        h.advance(350);
+        assert.equal(h.context.playerBufferState.userPauseIntent, true);
+        h.current.player.isPaused = () => false;
+        h.context.monitorPlayerBuffering();
+        assert.equal(h.context.playerBufferState.userPauseIntent, false);
+    });
+
     test('synthetic resilience: ' + file + ' opt-in page fallback waits for both failures and another stalled window', () => {
         const h = recoveryHarness(file);
         h.storage.set('twitchAdSolutions_pageRefreshFallback', 'true');

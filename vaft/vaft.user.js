@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TwitchAdSolutions (vaft)
 // @namespace    https://github.com/ryanbr/TwitchAdSolutions
-// @version      68.5.35
+// @version      68.5.36
 // @description  Multiple solutions for blocking Twitch ads (vaft)
 // @updateURL    https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft.user.js
 // @downloadURL  https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft.user.js
@@ -48,7 +48,7 @@
         }
     }
     'use strict';
-    const ourTwitchAdSolutionsVersion = 120;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 121;// Used to prevent conflicts with outdated versions of the scripts
     console.log('[AD DEBUG] TwitchAdSolutions vaft v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
         console.log('[AD DEBUG] CONFLICT: vaft v' + ourTwitchAdSolutionsVersion + ' skipped — another script already active (v' + window.twitchAdSolutionsVersion + '). Remove duplicate scripts.');
@@ -2177,6 +2177,12 @@
         lastReloadAt: 0,
         recoveryReloadUsed: false,
         userPauseIntent: false,
+        pauseIntentVideo: null,
+        pauseIntentSource: null,
+        pauseIntentAt: 0,
+        pauseInputVideo: null,
+        pauseInputAt: 0,
+        pauseInputHooked: false,
         loggedPauseIntent: false,
         weJustPaused: 0,
         inAdBreak: false,
@@ -2185,6 +2191,69 @@
         gapJumpLastPosition: -1,
         gapJumpStuckTicks: 0
     };
+    function updatePlayerPauseIntent(current) {
+        const video = current?.player?.getHTMLVideoElement?.();
+        if (!video) return;
+        const clearIntent = reason => {
+            if (playerBufferState.userPauseIntent) recordTASDiagnostic({ event: 'pause-intent-cleared', reason });
+            playerBufferState.userPauseIntent = false;
+            playerBufferState.pauseIntentVideo = null;
+            playerBufferState.pauseIntentSource = null;
+            playerBufferState.pauseInputVideo = null;
+            playerBufferState.pauseInputAt = 0;
+            playerBufferState.loggedPauseIntent = false;
+        };
+        if (!playerBufferState.pauseInputHooked) {
+            playerBufferState.pauseInputHooked = true;
+            const noteInput = event => {
+                if (!event.isTrusted) return;
+                const target = event.composedPath?.()[0] || event.target;
+                if (event.composedPath?.().some(node => node.id === 'tas-controls')) return;
+                if (event.type === 'keydown') {
+                    if (event.repeat || event.altKey || event.ctrlKey || event.metaKey || target?.isContentEditable
+                        || /^(INPUT|TEXTAREA|SELECT)$/.test(target?.tagName)
+                        || !['Space', 'KeyK', 'MediaPause', 'MediaPlayPause'].includes(event.code)) return;
+                } else if (event.button !== 0) return;
+                else if (target?.tagName !== 'VIDEO'
+                    && !target?.closest?.('[data-a-target="player-play-pause-button"], [data-test-selector="player-play-pause-button"]')) return;
+                playerBufferState.pauseInputVideo = getPlayerAndState()?.player?.getHTMLVideoElement?.();
+                playerBufferState.pauseInputAt = Date.now();
+            };
+            document.addEventListener('pointerdown', noteInput, true);
+            document.addEventListener('keydown', noteInput, true);
+        }
+        const ownsIntent = !!playerBufferState.pauseIntentVideo;
+        const playerPlaying = !current.player.isPaused() && !current.player.core?.paused;
+        if (ownsIntent && playerBufferState.pauseIntentVideo !== video) {
+            if (playerBufferState.pauseIntentSource !== 'input' || (!video.paused && playerPlaying)) clearIntent('video-replaced');
+        } else if (ownsIntent && playerBufferState.pauseIntentSource === 'inferred' && playerPlaying
+            && Date.now() - playerBufferState.pauseIntentAt >= 350) {
+            clearIntent('player-playing');
+        }
+        if (video.__tasIntentHooked) return;
+        video.__tasIntentHooked = true;
+        const activeVideo = () => getPlayerAndState()?.player?.getHTMLVideoElement?.() === video;
+        video.addEventListener('pause', () => {
+            if (!activeVideo() || document.hidden) return;
+            const recentInput = (playerBufferState.pauseInputVideo === video
+                && Date.now() - playerBufferState.pauseInputAt <= 1500)
+                || (playerBufferState.userPauseIntent && playerBufferState.pauseIntentVideo === video && playerBufferState.pauseIntentSource === 'input');
+            if (!recentInput && playerBufferState.weJustPaused && Date.now() - playerBufferState.weJustPaused <= 2000) return;
+            playerBufferState.pauseInputVideo = null;
+            playerBufferState.pauseInputAt = 0;
+            playerBufferState.userPauseIntent = true;
+            playerBufferState.pauseIntentVideo = video;
+            playerBufferState.pauseIntentAt = Date.now();
+            playerBufferState.pauseIntentSource = recentInput ? 'input' : 'inferred';
+            recordTASDiagnostic({ event: 'pause-intent', source: playerBufferState.pauseIntentSource });
+            // Native media events alone cannot identify a user action. Give Twitch time
+            // to update its logical pause state before reconciling an inferred pause.
+            setTimeout(() => updatePlayerPauseIntent(getPlayerAndState()), 350);
+        });
+        video.addEventListener('play', () => {
+            if (activeVideo()) clearIntent('play');
+        });
+    }
     // Poll the player state to detect and fix buffering caused by ad stream switching
     function monitorPlayerBuffering() {
         clearTimeout(monitorPlayerBuffering.timeoutId);
@@ -2199,20 +2268,7 @@
                     player: playerAndState.player,
                     state: playerAndState.state
                 };
-                const video = playerAndState.player.getHTMLVideoElement?.();
-                if (video && !video.__tasIntentHooked) {
-                    video.__tasIntentHooked = true;
-                    video.addEventListener('pause', () => {
-                        // Twitch can pause a hidden live stream without user input.
-                        if (!document.hidden && (!playerBufferState.weJustPaused || (Date.now() - playerBufferState.weJustPaused) > 2000)) {
-                            playerBufferState.userPauseIntent = true;
-                        }
-                    });
-                    video.addEventListener('play', () => {
-                        playerBufferState.userPauseIntent = false;
-                        playerBufferState.loggedPauseIntent = false;
-                    });
-                }
+                updatePlayerPauseIntent(playerAndState);
             }
         }
         if (playerForMonitoringBuffering) {
@@ -3328,12 +3384,14 @@
     function recordTASDiagnostic(data) {
         if (typeof window === 'undefined' || !window.__tasDiagnostics) return;
         const state = window.__tasDiagnostics;
-        const allowedEvents = ['backup-attempt', 'backup-selected', 'ad-start', 'ad-end', 'reload-request', 'pause-play', 'worker-error', 'reload-start', 'recovery-finished', 'recovery-blocked', 'page-refresh'];
+        const allowedEvents = ['backup-attempt', 'backup-selected', 'ad-start', 'ad-end', 'reload-request', 'pause-play', 'worker-error', 'reload-start', 'recovery-finished', 'recovery-blocked', 'page-refresh', 'pause-intent', 'pause-intent-cleared'];
         if (!allowedEvents.includes(data.event)) return;
         if (data.event === 'backup-selected' && data.playerType === state.current.backup && data.quality === state.current.quality) return;
         if (data.event === 'reload-request' || data.event === 'reload-start') state.current.recoveryOutcome = null;
         const entry = { atMs: Math.max(0, Date.now() - state.startedAt), event: data.event };
         if (data.event === 'page-refresh') state.current.recoveryOutcome = 'page-refresh-requested';
+        if (data.event === 'pause-intent') entry.source = data.source === 'input' ? 'input' : 'inferred';
+        if (data.event === 'pause-intent-cleared') entry.reason = ['play', 'player-playing', 'video-replaced'].includes(data.reason) ? data.reason : 'play';
         if (data.event === 'recovery-blocked') {
             entry.reason = ['unavailable', 'user-pause', 'not-live', 'paused'].includes(data.reason) ? data.reason : 'unavailable';
             state.current.recoveryOutcome = 'blocked-' + entry.reason;
@@ -3553,7 +3611,7 @@
         window.twitchAdSolutionsTools = { openSettings: show, diagnostics: getTASDiagnostics };
     }
     function onContentLoaded() {
-        initializeTASControls('vaft', '68.5.35');
+        initializeTASControls('vaft', '68.5.36');
         if (document.getElementById('seventv-extension')) {
             console.log('[AD DEBUG] Warning: 7TV extension detected — may cause black screen or buffering issues. If you experience problems, try disabling 7TV.');
         }

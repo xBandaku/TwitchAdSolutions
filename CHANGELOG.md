@@ -1,3 +1,12 @@
+## v68.5.36 (2026-10-17)
+
+- Fix vaft pause-intent detection so an internal video pause does not permanently block recovery when Twitch's logical player and core still report playing. Reconcile inferred intent after a 350ms settling window and on subsequent monitor ticks. Preserve pauses associated with trusted playback-control input or logical paused state; ignore pause/play events from replaced videos.
+- Track only the timing and video identity of playback-control pointer/keyboard input, without recording typed text. Ignore typing, modified/repeated shortcuts, non-primary pointer input and the settings dialog. Clear consumed input cues when playback resumes.
+- Add sanitized pause-intent and pause-intent-cleared diagnostics to distinguish inferred/control-linked intent and explain why it cleared. Events remain capped at 100 and omit channel names, URLs, tokens and headers.
+- Confirmed live evidence: a user-supplied Firefox console trace records Twitch's worker RPC pausing at 1076.861818 seconds; the matching export has the identical position, native paused=true, player/core paused=false, userPauseIntent=true and a blocked-user-pause recovery request after the ad ended. This identifies the recovery block; it does not establish why Twitch initiated the pause. Raw user logs are not included in the repository. Fix verification uses synthetic event/player fixtures and native-media browser tests; live behavior after this patch still needs confirmation.
+- Validation: six targeted regressions fail at 806c09f for the expected pause-intent errors and pass after the fix. Local Windows lint, Node suites, packaging and four Python checks pass; browser fixtures pass 258 tests with 30 documented Windows WebKit media skips. Native-media fixtures verify that an internal pause permits recovery and a trusted pause control remains protected despite stale logical flags.
+- Version: vaft 68.5.36 (internal 121). Other script versions are unchanged.
+
 ## v68.5.35 (2026-10-17)
 
 - Add an optional vaft full-page refresh fallback under Advanced recovery settings, disabled by default. After both player recovery attempts time out, require another 3 seconds without progress on the same video and route before refreshing.
