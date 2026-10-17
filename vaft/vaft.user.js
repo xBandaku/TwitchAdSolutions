@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TwitchAdSolutions (vaft)
 // @namespace    https://github.com/ryanbr/TwitchAdSolutions
-// @version      68.5.34
+// @version      68.5.35
 // @description  Multiple solutions for blocking Twitch ads (vaft)
 // @updateURL    https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft.user.js
 // @downloadURL  https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft.user.js
@@ -48,7 +48,7 @@
         }
     }
     'use strict';
-    const ourTwitchAdSolutionsVersion = 119;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 120;// Used to prevent conflicts with outdated versions of the scripts
     console.log('[AD DEBUG] TwitchAdSolutions vaft v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
         console.log('[AD DEBUG] CONFLICT: vaft v' + ourTwitchAdSolutionsVersion + ' skipped — another script already active (v' + window.twitchAdSolutionsVersion + '). Remove duplicate scripts.');
@@ -2831,6 +2831,47 @@
     const iosSoftReload = isAppleTouchDevice && (function() {
         try { return localStorage.getItem('twitchAdSolutions_iosSoftReload') !== 'false'; } catch { return true; }
     })();
+    function schedulePageRefreshFallback(request) {
+        const enabled = () => {
+            try { return localStorage.getItem('twitchAdSolutions_pageRefreshFallback') === 'true'; }
+            catch { return false; }
+        };
+        if (!enabled()) return;
+        const route = window.location.href;
+        const current = getPlayerAndState();
+        const video = current?.player?.getHTMLVideoElement?.();
+        if (!video || !Number.isFinite(video.currentTime)) return;
+        const position = video.currentTime;
+        const eligible = () => {
+            const latest = getPlayerAndState();
+            return enabled() && window.location.href === route
+                && doTwitchPlayerTask.latestRecovery === request && !doTwitchPlayerTask.recovery
+                && latest?.state?.props?.content?.type === 'live'
+                && latest.player?.getHTMLVideoElement?.() === video && !latest.player.isPaused()
+                && !playerBufferState.userPauseIntent && !document.pictureInPictureElement
+                && !video.ended && !video.seeking && Number.isFinite(video.currentTime)
+                && Math.abs(video.currentTime - position) <= 0.05;
+        };
+        if (!eligible()) return;
+        clearTimeout(doTwitchPlayerTask.pageRefreshTimer);
+        doTwitchPlayerTask.pageRefreshTimer = setTimeout(() => {
+            doTwitchPlayerTask.pageRefreshTimer = null;
+            if (!eligible()) return;
+            // Fail closed if the cooldown cannot survive navigation in this tab.
+            try {
+                const key = 'twitchAdSolutions_lastPageRefreshAt';
+                const stored = sessionStorage.getItem(key);
+                const last = Number(stored);
+                const now = Date.now();
+                if (stored !== null && (!Number.isFinite(last) || last <= 0 || now - last < 300000)) return;
+                sessionStorage.setItem(key, String(now));
+                if (sessionStorage.getItem(key) !== String(now)) return;
+            } catch { return; }
+            recordTASDiagnostic({ event: 'page-refresh' });
+            console.log('[AD DEBUG] Player recovery exhausted; refreshing the page (five-minute cooldown)');
+            window.location.reload();
+        }, 3000);
+    }
     // Pause/play or fully reload the Twitch player, preserving quality/volume settings
     function doTwitchPlayerTask(isPausePlay, isReload, reloadKind) {
         if (isReload || isPausePlay) recordTASDiagnostic({ event: isReload ? 'reload-request' : 'pause-play', reason: reloadKind || 'normal' });
@@ -2936,6 +2977,8 @@
             const channelName = getPlaybackChannelName(playerAndState);
             const isSameStream = current => channelName
                 ? getPlaybackChannelName(current) === channelName : window.location.href === route;
+            clearTimeout(doTwitchPlayerTask.pageRefreshTimer);
+            doTwitchPlayerTask.pageRefreshTimer = null;
             const request = { promise: null, cancelled: false };
             let resolveRecovery, pollTimer, cleanupMute = () => {};
             let attempt = 0, maxAttempts = 2, needsUpgrade = false;
@@ -2969,6 +3012,7 @@
                 if (doTwitchPlayerTask.recovery === request) doTwitchPlayerTask.recovery = null;
                 recordTASDiagnostic({ event: 'recovery-finished', success, reason: success ? 'progress' : reason, attempt });
                 resolveRecovery(success);
+                if (!success && reason === 'timeout' && attempt >= 2) schedulePageRefreshFallback(request);
             };
             request.isCurrent = isCurrent;
             request.cancel = () => finish(false);
@@ -3284,11 +3328,12 @@
     function recordTASDiagnostic(data) {
         if (typeof window === 'undefined' || !window.__tasDiagnostics) return;
         const state = window.__tasDiagnostics;
-        const allowedEvents = ['backup-attempt', 'backup-selected', 'ad-start', 'ad-end', 'reload-request', 'pause-play', 'worker-error', 'reload-start', 'recovery-finished', 'recovery-blocked'];
+        const allowedEvents = ['backup-attempt', 'backup-selected', 'ad-start', 'ad-end', 'reload-request', 'pause-play', 'worker-error', 'reload-start', 'recovery-finished', 'recovery-blocked', 'page-refresh'];
         if (!allowedEvents.includes(data.event)) return;
         if (data.event === 'backup-selected' && data.playerType === state.current.backup && data.quality === state.current.quality) return;
         if (data.event === 'reload-request' || data.event === 'reload-start') state.current.recoveryOutcome = null;
         const entry = { atMs: Math.max(0, Date.now() - state.startedAt), event: data.event };
+        if (data.event === 'page-refresh') state.current.recoveryOutcome = 'page-refresh-requested';
         if (data.event === 'recovery-blocked') {
             entry.reason = ['unavailable', 'user-pause', 'not-live', 'paused'].includes(data.reason) ? data.reason : 'unavailable';
             state.current.recoveryOutcome = 'blocked-' + entry.reason;
@@ -3382,6 +3427,7 @@
             ['earlyReloadPollThreshold', 'Early reload poll threshold', 3, [0, 100, 1], '0 disables early reloads. A thin recovery cache can trigger sooner.']
         ];
         if (script === 'vaft') definitions.push(
+            ['pageRefreshFallback', 'Refresh the page if player recovery fails', false, 'boolean', 'Last resort after two failed player resets and another 3 seconds without progress. At most once every 5 minutes per tab. May trigger another ad and interrupt chat.'],
             ['driftCorrectionRate', 'Catch-up playback speed', 1.1, [0, 2, 0.05], '0 disables catch-up.'],
             ['preferLowQualityBackup', 'Allow low-quality backup recovery', true, 'boolean'],
             ['backupSwapFirst', 'Try backup streams before stripping', true, 'boolean'],
@@ -3507,7 +3553,7 @@
         window.twitchAdSolutionsTools = { openSettings: show, diagnostics: getTASDiagnostics };
     }
     function onContentLoaded() {
-        initializeTASControls('vaft', '68.5.34');
+        initializeTASControls('vaft', '68.5.35');
         if (document.getElementById('seventv-extension')) {
             console.log('[AD DEBUG] Warning: 7TV extension detected — may cause black screen or buffering issues. If you experience problems, try disabling 7TV.');
         }
