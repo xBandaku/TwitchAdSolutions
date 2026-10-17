@@ -37,7 +37,7 @@ twitch-videoad.js text/javascript
         }
     }
     'use strict';
-    const ourTwitchAdSolutionsVersion = 116;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 117;// Used to prevent conflicts with outdated versions of the scripts
     console.log('[AD DEBUG] TwitchAdSolutions vaft v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
         console.log('[AD DEBUG] CONFLICT: vaft v' + ourTwitchAdSolutionsVersion + ' skipped — another script already active (v' + window.twitchAdSolutionsVersion + '). Remove duplicate scripts.');
@@ -2183,28 +2183,47 @@ twitch-videoad.js text/javascript
                     const bufferedPosition = player.core?.state?.bufferedPosition;
                     const bufferDuration = player.getBufferDuration();
                     // video.currentTime is the source of truth for actual playback progress —
-                    // state.position updates in batches on reload-heavy channels and can
-                    // appear frozen for ~12s while the video element advances smoothly.
+                    // player.core.state.position updates in batches on reload-heavy channels
+                    // (see PR #183 commit msg), so it can appear frozen for ~12s even while
+                    // the video element is advancing smoothly. Used in the stall trigger below
+                    // alongside state.position so a real stall (BOTH frozen) is required to
+                    // fire, not just a batch-update lull in state.position.
                     const videoEl = player.getHTMLVideoElement?.();
                     const videoCurrentTime = videoEl?.currentTime;
                     if (position !== undefined && bufferedPosition !== undefined) {
                         // NOTE: This could be improved. It currently lets the player fully eat the full buffer before it triggers pause/play
-                        // Skip the buffer-stall check while the <video> element isn't actively trying
-                        // to play: readyState < 2 (MSE init / seek) or paused=true (autoplay-policy /
-                        // reload teardown race with player.isPaused()). Hold counters so a real stall
-                        // sequence interrupted by a brief init dip resumes counting on next active poll.
+                        // Skip the buffer-stall check entirely while the <video> element isn't actively
+                        // trying to play. Two states this catches:
+                        //   readyState < 2 (HAVE_CURRENT_DATA) — MSE init / seek in flight / fresh post-
+                        //     reload load. currentTime and state.position are both genuinely 0 here, but
+                        //     it's an initialization state, not a stall — escalating would loop reloads.
+                        //   videoEl.paused === true — the outer block already gates on
+                        //     player.isPaused()===false, but the IVS player wrapper and the underlying
+                        //     <video>.paused can disagree briefly during reload teardown / autoplay-policy
+                        //     mute toggles. When <video>.paused is true the player isn't trying to play
+                        //     so "stalled" is the wrong word.
+                        // Hold counters (don't increment, don't reset): a real stall sequence interrupted
+                        // by a brief init dip resumes counting on the next active poll.
                         const playerNotActivelyPlaying = videoEl && (videoEl.readyState < 2 || videoEl.paused);
-                        // FFZ's audio compressor recreates the <video> element on every player.load().
-                        // Twitch then snaps the new element to "buffered region 0.04xxx" — a brief
-                        // currentTime plateau that matches positionFrozen even though playback is
-                        // healthy. Detect the swap by element identity and clear counters so the
-                        // ramp-up isn't counted as a stall.
+                        // FFZ's audio compressor wraps player.load() and creates a fresh <video>
+                        // element on every load (src/sites/shared/player.jsx replaceVideoElement).
+                        // Twitch's playback-monitor then snaps the new element to "buffered region
+                        // 0.04xxx" while the buffer rebuilds. During that brief ramp-up window,
+                        // currentTime plateaus and state.position is also at its post-reload reset
+                        // — exactly the positionFrozen pattern. Detect the swap by element identity
+                        // and treat it like a fresh reload (clear counters, set the recovery flag
+                        // so the next active poll grants grace).
                         if (videoEl && playerBufferState.videoElement && playerBufferState.videoElement !== videoEl) {
                             playerBufferState.numSame = 0;
                             playerBufferState.fixAttempts = 0;
                             playerBufferState.recoveryReloadUsed = false;
                         }
                         playerBufferState.videoElement = videoEl;
+                        // Stall trigger: position-frozen check now requires BOTH state.position
+                        // AND video.currentTime unchanged. If currentTime is advancing the player
+                        // is playing fine and we should not "fix" anything — the false-fires
+                        // were causing user-visible 8s-cadence abrupts on low-latency / post-
+                        // quality-change states.
                         const positionFrozen = (playerBufferState.position == position) &&
                             (playerBufferState.videoCurrentTime === undefined || playerBufferState.videoCurrentTime === videoCurrentTime);
                         if (playerNotActivelyPlaying) {
@@ -2413,10 +2432,18 @@ twitch-videoad.js text/javascript
                 if (!watch || watch.video !== video || watch.channelName !== channelName) {
                     watch = playerBufferState.adPlaybackWatch = {
                         video, channelName, position: video.currentTime,
-                        hasPlayed: false, stalledAt: 0, reloadUsed: false
+                        hasPlayed: false, stalledAt: 0, reloadUsed: false,
+                        inAdBreak: !!playerBufferState.inAdBreak, postBreakUntil: 0
                     };
                 }
                 const now = Date.now();
+                if (watch.inAdBreak && !playerBufferState.inAdBreak) {
+                    watch.postBreakUntil = now + 45000;
+                    watch.stalledAt = 0;
+                    watch.reloadUsed = false;
+                }
+                watch.inAdBreak = !!playerBufferState.inAdBreak;
+                const postBreakWatch = !watch.inAdBreak && now < watch.postBreakUntil;
                 const recentReload = playerBufferState.lastReloadAt && now - playerBufferState.lastReloadAt < 15000;
                 const recentSwitch = playerBufferState.lastBackupSwitchAt && now - playerBufferState.lastBackupSwitchAt < 10000;
                 const advanced = video.currentTime > watch.position + 0.05;
@@ -2426,14 +2453,14 @@ twitch-videoad.js text/javascript
                     watch.hasPlayed = true;
                     if (!recentReload && !doTwitchPlayerTask.recovery) watch.reloadUsed = false;
                 }
-                if (advanced || reset || !watch.hasPlayed || !playerBufferState.inAdBreak
+                if (advanced || reset || !watch.hasPlayed || (!playerBufferState.inAdBreak && !postBreakWatch)
                     || video.paused || video.ended || monitored.player.isPaused()
-                    || playerBufferState.userPauseIntent || recentReload || recentSwitch) {
+                    || playerBufferState.userPauseIntent || recentReload || recentSwitch || doTwitchPlayerTask.recovery) {
                     watch.stalledAt = 0;
                 } else if (!watch.reloadUsed) {
                     if (!watch.stalledAt) watch.stalledAt = now;
                     else if (now - watch.stalledAt >= 8000) {
-                        console.log('[AD DEBUG] Ad backup playhead frozen for ' + ((now - watch.stalledAt) / 1000).toFixed(1)
+                        console.log('[AD DEBUG] ' + (postBreakWatch ? 'Post-ad' : 'Ad backup') + ' playhead frozen for ' + ((now - watch.stalledAt) / 1000).toFixed(1)
                             + 's (readyState=' + video.readyState + ', networkState=' + video.networkState
                             + ', bufferedRanges=' + video.buffered.length + ', stripping=' + isActivelyStrippingAds + ') - hard reload');
                         watch.reloadUsed = true;
@@ -2844,7 +2871,9 @@ twitch-videoad.js text/javascript
                     && isSameStream(current) && !playerBufferState.userPauseIntent
                     && (!current?.state?.props?.content?.type || current.state.props.content.type === 'live');
             };
-            const finish = success => {
+            const finish = (success, reason = 'cancelled') => {
+                if (request.finished) return;
+                request.finished = true;
                 clearTimeout(pollTimer);
                 if (!success) {
                     rollbackPreMute();
@@ -2852,6 +2881,7 @@ twitch-videoad.js text/javascript
                     cleanupMute();
                 }
                 if (doTwitchPlayerTask.recovery === request) doTwitchPlayerTask.recovery = null;
+                recordTASDiagnostic({ event: 'recovery-finished', success, reason: success ? 'progress' : reason, attempt });
                 resolveRecovery(success);
             };
             request.isCurrent = isCurrent;
@@ -2914,7 +2944,7 @@ twitch-videoad.js text/javascript
                 if (Date.now() >= deadline) {
                     if (attempt >= maxAttempts) {
                         console.log('[AD DEBUG] Player recovery stopped after ' + attempt + ' attempts');
-                        finish(false);
+                        finish(false, 'timeout');
                         return;
                     }
                     reload();
@@ -2927,7 +2957,7 @@ twitch-videoad.js text/javascript
                 const current = getPlayerAndState();
                 if (!current?.state?.setSrc) {
                     console.log('[AD DEBUG] Player recovery stopped: replacement player unavailable');
-                    finish(false);
+                    finish(false, 'unavailable');
                     return;
                 }
                 attempt++;
@@ -2939,12 +2969,13 @@ twitch-videoad.js text/javascript
                 playerBufferState.weJustPaused = Date.now();
                 playerForMonitoringBuffering = null;
                 console.log('[AD DEBUG] Reloading Twitch player (' + (hardReload ? 'hard' : 'soft') + ', attempt ' + attempt + '/' + maxAttempts + ')');
+                recordTASDiagnostic({ event: 'reload-start', attempt, hardReload });
                 prepareMute();
                 try {
                     current.state.setSrc({ isNewMediaPlayerInstance: hardReload, refreshAccessToken: refreshToken });
                 } catch (error) {
                     console.log('[AD DEBUG] Player reload failed: ' + error.message);
-                    finish(false);
+                    finish(false, 'exception');
                     return;
                 }
                 postTwitchWorkerMessage('TriggeredPlayerReload');
@@ -3123,22 +3154,57 @@ twitch-videoad.js text/javascript
         }, 'fetch');
     }
     // Set up visibility overrides and localStorage hooks to preserve player state across reloads
+    function getTASPlaybackSnapshot() {
+        try {
+            const current = getPlayerAndState();
+            const video = current?.player?.getHTMLVideoElement?.();
+            if (!video) return { available: false };
+            const finite = value => Number.isFinite(value) ? value : null;
+            const ranges = [];
+            for (let i = 0; i < Math.min(video.buffered.length, 8); i++) {
+                ranges.push({ start: finite(video.buffered.start(i)), end: finite(video.buffered.end(i)) });
+            }
+            let frames = null;
+            try { frames = finite(video.getVideoPlaybackQuality?.().totalVideoFrames); } catch {}
+            return {
+                available: true, currentTime: finite(video.currentTime), readyState: finite(video.readyState),
+                networkState: finite(video.networkState), paused: video.paused === true, ended: video.ended === true,
+                seeking: video.seeking === true, buffered: ranges, decodedFrames: frames,
+                mediaErrorCode: finite(video.error?.code), playerPaused: current.player.isPaused?.() === true,
+                live: current.state?.props?.content?.type === 'live',
+                userPauseIntent: playerBufferState.userPauseIntent === true,
+                inAdBreak: playerBufferState.inAdBreak === true, stripping: isActivelyStrippingAds === true,
+                recoveryActive: !!doTwitchPlayerTask.recovery,
+                lastReloadAgoMs: playerBufferState.lastReloadAt ? Math.max(0, Date.now() - playerBufferState.lastReloadAt) : null
+            };
+        } catch { return { available: false }; }
+    }
     function getTASDiagnostics() {
         const state = window.__tasDiagnostics;
         if (!state) return null;
         return {
-            schemaVersion: 1, evidence: 'local diagnostic events; not proof of live playback',
+            schemaVersion: 2, evidence: 'local diagnostic events; not proof of live playback',
             script: state.script, version: state.version,
             elapsedMs: Math.max(0, Date.now() - state.startedAt),
-            current: { ...state.current }, events: state.events.map(event => ({ ...event }))
+            current: { ...state.current }, playback: getTASPlaybackSnapshot(), events: state.events.map(event => ({ ...event }))
         };
     }
     function recordTASDiagnostic(data) {
         if (typeof window === 'undefined' || !window.__tasDiagnostics) return;
         const state = window.__tasDiagnostics;
-        const allowedEvents = ['backup-attempt', 'backup-selected', 'ad-start', 'ad-end', 'reload-request', 'pause-play', 'worker-error'];
+        const allowedEvents = ['backup-attempt', 'backup-selected', 'ad-start', 'ad-end', 'reload-request', 'pause-play', 'worker-error', 'reload-start', 'recovery-finished'];
         if (!allowedEvents.includes(data.event)) return;
+        if (data.event === 'backup-selected' && data.playerType === state.current.backup && data.quality === state.current.quality) return;
         const entry = { atMs: Math.max(0, Date.now() - state.startedAt), event: data.event };
+        if (data.event === 'reload-start' || data.event === 'recovery-finished') {
+            entry.attempt = Number.isInteger(data.attempt) && data.attempt >= 0 && data.attempt <= 3 ? data.attempt : 0;
+            if (data.event === 'reload-start') entry.hardReload = data.hardReload === true;
+            else {
+                entry.success = data.success === true;
+                entry.reason = ['progress', 'timeout', 'unavailable', 'exception', 'cancelled'].includes(data.reason) ? data.reason : 'cancelled';
+                state.current.recoveryOutcome = entry.success ? 'progress-observed' : entry.reason;
+            }
+        }
         if (data.playerType !== undefined) {
             entry.playerType = ['popout', 'embed', 'site', 'mobile_web', 'autoplay'].includes(data.playerType) ? data.playerType : 'unknown';
         }
@@ -3267,7 +3333,8 @@ twitch-videoad.js text/javascript
         };
         state.render = () => {
             details.textContent = 'Backup: ' + state.current.backup + ' | Quality: ' + state.current.quality
-                + ' | Last recovery request: ' + state.current.recovery;
+                + ' | Last recovery request: ' + state.current.recovery
+                + (state.current.recoveryOutcome ? ' (' + state.current.recoveryOutcome + ')' : '');
         };
         const show = () => {
             feedback.textContent = '';
@@ -3314,7 +3381,7 @@ twitch-videoad.js text/javascript
         window.twitchAdSolutionsTools = { openSettings: show, diagnostics: getTASDiagnostics };
     }
     function onContentLoaded() {
-        initializeTASControls('vaft', '68.5.31');
+        initializeTASControls('vaft', '68.5.32');
         if (document.getElementById('seventv-extension')) {
             console.log('[AD DEBUG] Warning: 7TV extension detected — may cause black screen or buffering issues. If you experience problems, try disabling 7TV.');
         }

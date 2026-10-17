@@ -197,8 +197,8 @@ async function bootRecovery(page, context, file) {
         document.body.appendChild(start);
         const source = `
             self.addEventListener('message', event => {
-                if (event.data.fixtureAdBreak) {
-                    self.postMessage({ key: 'UpdateAdBlockBanner', hasAds: true, isMidroll: true,
+                if (event.data.fixtureAdBreak || event.data.fixtureAdEnd) {
+                    self.postMessage({ key: 'UpdateAdBlockBanner', hasAds: !event.data.fixtureAdEnd, isMidroll: true,
                         isStrippingAdSegments: false, activeBackupPlayerType: 'popout', channelName: 'fixture-channel', sessionId: 1 });
                 } else if (event.data.fixtureReload) {
                     self.postMessage({ key: 'ReloadPlayer', kind: event.data.kind, channelName: 'fixture-channel', sessionId: 1 });
@@ -220,6 +220,7 @@ async function bootRecovery(page, context, file) {
         });
         fixture.reload = kind => fixture.send({ fixtureReload: true, kind });
         fixture.adBreak = () => fixture.send({ fixtureAdBreak: true });
+        fixture.endAdBreak = () => fixture.send({ fixtureAdEnd: true });
     });
     await expect.poll(() => page.evaluate(() => window.__recoveryFixture.current.video.readyState)).toBeGreaterThanOrEqual(2);
     await page.locator('#fixture-start').click();
@@ -238,6 +239,41 @@ test.afterEach(async ({ page }, testInfo) => {
 
 for (const script of scripts) {
     if (script.file.startsWith('vaft/vaft')) {
+        test('synthetic resilience: ' + script.file + ' recovers a depleted native video after an ad ends', async ({ page, context }) => {
+            await bootRecovery(page, context, script.file);
+            await page.clock.runFor(600);
+            const baseline = await page.evaluate(() => window.__recoveryFixture.current.video.currentTime);
+            await expect.poll(() => page.evaluate(() => window.__recoveryFixture.current.video.currentTime)).toBeGreaterThan(baseline + 0.2);
+            await page.clock.runFor(600);
+            await page.evaluate(async () => {
+                const fixture = window.__recoveryFixture;
+                await fixture.adBreak();
+                fixture.current.video.playbackRate = 0;
+                Object.defineProperty(fixture.current.video, 'readyState', { configurable: true, value: 1 });
+                Object.defineProperty(fixture.current.video, 'buffered', { configurable: true, value: { length: 0 } });
+            });
+            await page.clock.runFor(600);
+            await page.evaluate(() => window.__recoveryFixture.endAdBreak());
+            expect(await page.evaluate(() => window.twitchAdSolutionsTools.diagnostics().playback)).toMatchObject({
+                readyState: 1, inAdBreak: false, recoveryActive: false, buffered: []
+            });
+            await page.clock.runFor(17400);
+            expect(await page.evaluate(() => window.__recoveryFixture.reloads.length)).toBe(0);
+            await page.clock.runFor(1800);
+            expect(await page.evaluate(() => window.__recoveryFixture.reloads)).toEqual([
+                { isNewMediaPlayerInstance: true, refreshAccessToken: true }
+            ]);
+            await expect.poll(() => page.evaluate(() => window.__recoveryFixture.current.video.readyState)).toBeGreaterThanOrEqual(2);
+            await page.evaluate(() => { window.__recoveryFixture.current.video.currentTime = 17; });
+            await page.clock.runFor(150);
+            await expect.poll(() => page.evaluate(() => window.__recoveryFixture.current.video.currentTime)).toBeGreaterThan(17.2);
+            await page.clock.runFor(300);
+            const events = await page.evaluate(() => window.twitchAdSolutionsTools.diagnostics().events);
+            expect(events.some(event => event.event === 'reload-start' && event.hardReload)).toBe(true);
+            expect(events.some(event => event.event === 'recovery-finished' && event.success)).toBe(true);
+            expect(states.get(page).logs.some(message => message.includes('Post-ad playhead frozen'))).toBe(true);
+        });
+
         test('synthetic resilience: ' + script.file + ' runs shared recovery helpers inside the injected worker', async ({ page, context }) => {
             await boot(page, context, script.file);
             const result = await page.evaluate(async () => {
