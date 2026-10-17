@@ -1,3 +1,12 @@
+## v68.5.33 (2026-10-17)
+
+- Allow required early resets when stale paused internals disagree with a wrapper that reports playing. Explicit user pause and wrapper-confirmed pause still block recovery, and paused picture-in-picture playback remains protected.
+- Let the bounded ad/post-ad watchdog recover a paused native video when the player wrapper reports playing and there is no user pause intent. Keep the two-attempt recovery deadline when play cannot resume, instead of cancelling on stale paused internals.
+- Add allowlisted recovery-blocked reasons and the core pause signal to diagnostic exports, distinguishing a blocked request from an actual reset or timeout.
+- Evidence: a user export from v68.5.32 shows native paused=true, wrapper paused=false, userPauseIntent=false, an early reset request, no reload-start event and no last-reload timestamp. The internal core pause flag was not captured. Synthetic tests reproduce the matching pause-gate and watchdog failures; live recovery after this patch still needs confirmation.
+- Six targeted regressions fail against dea40e3 for the expected reasons and pass after the fixes in both vaft formats. Add browser coverage for the paused-video/playing-wrapper mismatch, and retain pause-intent, PiP, navigation and bounded-retry checks.
+- Version: vaft 68.5.33 (internal 118). Other script versions are unchanged.
+
 ## v68.5.32 (2026-10-17)
 
 - Preventive hardening for a full post-ad freeze: keep watching an already-playing video for 45 seconds after an ad ends. A depleted, non-advancing playhead can request bounded recovery after switch/reload grace periods, even with no current media data. Preserve observed playback, the watch deadline and its recovery budget across same-channel video replacements. Reset on navigation, respect pause intent and seeking, and do not treat initial loading as a stall.
