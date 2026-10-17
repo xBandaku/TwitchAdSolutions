@@ -37,6 +37,42 @@ for (const name of fixtures) {
         }
     });
 
+    for (const file of ['video-swap-new/video-swap-new.user.js', 'video-swap-new/video-swap-new-ublock-origin.js', 'strip/strip.user.js']) {
+        test('captured response: ' + name + ' replays master and media hooks through ' + file, async t => {
+            const requested = [];
+            const context = createScriptContext(readScript(file), {
+                console: { log() {}, error() {} }, URL, Request, Response, Headers, Blob, AbortController, Uint8Array, atob,
+                setTimeout, clearTimeout, postMessage() {}, fetch: async input => {
+                    const url = typeof input === 'string' ? input : input.url;
+                    requested.push(url);
+                    const exchange = [capture.master, capture.media].find(item => item.request.url === url);
+                    assert.ok(exchange, 'Unrecorded network request: ' + url);
+                    const response = new Response(exchange.response.body, {
+                        status: exchange.response.status, headers: exchange.response.headers
+                    });
+                    Object.defineProperty(response, 'url', { value: exchange.response.finalUrl });
+                    return response;
+                }
+            });
+            let processed = 0;
+            const method = file.startsWith('strip/') ? 'stripAdSegments' : 'processM3U8';
+            const original = context[method];
+            context[method] = (...args) => { processed++; return original(...args); };
+            context.hookWorkerFetch();
+            assert.match(await (await context.fetch(capture.master.request.url)).text(), /^#EXTM3U/);
+            const media = await (await context.fetch(capture.media.request.url)).text();
+            assert.match(media, /^#EXTM3U/);
+            const resolved = context.resolvePlaylistUrls(capture.media.response.body, capture.media.response.finalUrl);
+            for (const url of resolved.split(/\r?\n/).filter(line => line && !line.startsWith('#'))) {
+                assert.ok(media.includes(url), 'Captured clean media URI was lost');
+            }
+            assert.ok(requested.includes(capture.master.request.url));
+            assert.ok(requested.includes(capture.media.request.url));
+            assert.ok(processed > 0, 'Captured media bypassed the processing hook');
+            t.diagnostic('Unmodified sanitized capture replay; no live ad-break reproduction. Enhanced-codec and redirected relative-master triggers: NOT EXERCISED.');
+        });
+    }
+
     for (const file of ['vaft/vaft.user.js', 'vaft/vaft-ublock-origin.js']) {
         test('captured response: ' + name + ' loads through ' + file, async t => {
             const context = createScriptContext(readScript(file), {

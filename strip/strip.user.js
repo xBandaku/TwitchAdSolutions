@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TwitchAdSolutions (strip) - BAD, DON'T USE THIS
 // @namespace    https://github.com/ryanbr/TwitchAdSolutions
-// @version      1.11
+// @version      1.12
 // @description  Multiple solutions for blocking Twitch ads (strip)
 // @updateURL    https://github.com/xBandaku/TwitchAdSolutions/raw/master/strip/strip.user.js
 // @downloadURL  https://github.com/xBandaku/TwitchAdSolutions/raw/master/strip/strip.user.js
@@ -13,7 +13,7 @@
 // ==/UserScript==
 (function() {
     'use strict';
-    const ourTwitchAdSolutionsVersion = 28;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 29;// Used to prevent conflicts with outdated versions of the scripts
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
         console.log("skipping strip as there's another script active. ourVersion:" + ourTwitchAdSolutionsVersion + " activeVersion:" + window.twitchAdSolutionsVersion);
         window.twitchAdSolutionsVersion = ourTwitchAdSolutionsVersion;
@@ -229,7 +229,7 @@
                             }
                         };
                         realFetch(url, options).then(function(response) {
-                            processAfter(response);
+                            return processAfter(response);
                         })['catch'](function(err) {
                             reject(err);
                         });
@@ -245,7 +245,7 @@
                             }
                         };
                         realFetch(url, options).then(function(response) {
-                            processAfter(response);
+                            return processAfter(response);
                         })['catch'](function(err) {
                             reject(err);
                         });
@@ -275,7 +275,7 @@
                             }
                         };
                         realFetch(url, options).then(function(response) {
-                            processAfter(response);
+                            return processAfter(response);
                         })['catch'](function(err) {
                             reject(err);
                         });
@@ -365,7 +365,7 @@
         window.fetch = function(url, init, ...args) {
             if (typeof url === 'string') {
                 if (url.includes('gql')) {
-                    if (ForceAccessTokenPlayerType && typeof init.body === 'string' && init.body.includes('PlaybackAccessToken') && !init.body.includes('picture-by-picture') && !init.body.includes('frontpage')) {
+                    if (ForceAccessTokenPlayerType && typeof init?.body === 'string' && init.body.includes('PlaybackAccessToken') && !init.body.includes('picture-by-picture') && !init.body.includes('frontpage')) {
                         let replacedPlayerType = '';
                         const newBody = JSON.parse(init.body);
                         if (Array.isArray(newBody)) {
@@ -386,7 +386,7 @@
                             init.body = JSON.stringify(newBody);
                         }
                     }
-                    if (DisableMatureConentPopup) {
+                    if (DisableMatureConentPopup && typeof init?.body === 'string') {
                         const newBody2 = JSON.parse(init.body);
                         if (Array.isArray(newBody2)) {
                             let hasRemovedClassification = false;

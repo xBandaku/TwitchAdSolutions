@@ -29,6 +29,25 @@ function braveHarness(transport) {
     return { window, context, timers, load: file => vm.runInContext(readScript(file), context) };
 }
 
+test('synthetic resilience: Brave retry preserves binary body bytes and effective headers', async () => {
+    const calls = [];
+    const fixture = braveHarness(options => {
+        calls.push(options);
+        queueMicrotask(() => options.onload({ status: 200, responseText: '{}' }));
+    });
+    fixture.load('vaft/twitch-brave-fix.user.js');
+    const bytes = new Uint8Array([0, 128, 255, 65]);
+    await fixture.window.fetch('https://gql.twitch.tv/gql', { method: 'POST', body: bytes });
+    assert.ok(calls[0].data, 'binary retry body missing');
+    assert.deepEqual(Array.from(new Uint8Array(calls[0].data)), Array.from(bytes));
+    const request = new Request('https://gql.twitch.tv/gql', {
+        method: 'POST', headers: { 'X-Old': 'discard' }, body: 'old'
+    });
+    await fixture.window.fetch(request, { headers: { 'Content-Type': 'application/json' }, body: '{"new":true}' });
+    assert.equal(calls[1].data, '{"new":true}');
+    assert.ok(!Object.keys(calls[1].headers).some(key => key.toLowerCase() === 'x-old'));
+});
+
 for (const userscriptFirst of [false, true]) {
     test('synthetic resilience: Brave retry works once with both helpers, userscript first=' + userscriptFirst, async () => {
         const calls = [];

@@ -36,7 +36,7 @@ twitch-videoad.js text/javascript
             return;
         }
     }
-    const ourTwitchAdSolutionsVersion = 58;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 59;// Used to prevent conflicts with outdated versions of the scripts
     console.log('[AD DEBUG] TwitchAdSolutions video-swap-new v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
         console.log('[AD DEBUG] CONFLICT: video-swap-new v' + ourTwitchAdSolutionsVersion + ' skipped — another script already active (v' + window.twitchAdSolutionsVersion + '). Remove duplicate scripts.');
@@ -90,6 +90,7 @@ twitch-videoad.js text/javascript
             Urls: new Map(),
             RequestedAds: new Set(),
             Encodings: null,
+            BackupQuality: 'unknown',
             BackupEncodings: null,
             BackupEncodingsStatus: new Map(),
             BackupEncodingsPlayerTypeIndex: -1,
@@ -106,12 +107,13 @@ twitch-videoad.js text/javascript
             RecoveryM3U8: null,
             RecoveryStartSeq: undefined,
             CleanPlaylistCount: 0,
-            PendingAdEndAt: 0,
-            AdEndBounceCount: 0,
+            PendingAdEndAt: 0,// Timestamp of first clean backup-poll seen this break — drives the bounce-tolerant max-wait escalation gate (TTV-AB v6.6.7 #1/#4)
+            AdEndBounceCount: 0,// Count of ad-marker bounces while PendingAdEndAt is alive — telemetry only
             ConsecutiveZeroStripBreaks: 0,
             UseFallbackStream: false,
             LastCleanNativeM3U8: null,
             LastCleanNativePlaylistAt: 0,
+            // Early reload + cooldown
             ConsecutiveAllStrippedPolls: 0,
             EarlyReloadTriggered: false,
             LastPlayerReload: 0,
@@ -339,6 +341,7 @@ twitch-videoad.js text/javascript
                 twitchWorkers.length = 0;
                 twitchWorkers.push(this);
                 this.addEventListener('message', (e) => {
+                    if (e.data.key === 'TASDiagnostic') recordTASDiagnostic(e.data);
                     if (e.data.key == 'UboUpdateAdBanner') {
                         updateAdblockBanner(e.data);
                     } else if (e.data.key == 'UboReloadPlayer') {
@@ -438,6 +441,7 @@ twitch-videoad.js text/javascript
             hasAds: isShowingAd,
             isStrippingAdSegments: streamInfo.IsStrippingAdSegments,
             numStrippedAdSegments: streamInfo.NumStrippedAdSegments,
+            backupQuality: streamInfo.BackupQuality,
             activeBackupPlayerType: streamInfo.BackupEncodingsPlayerTypeIndex >= 0 ? OPT_BACKUP_PLAYER_TYPES[streamInfo.BackupEncodingsPlayerTypeIndex] : null
         });
     }
@@ -475,6 +479,7 @@ twitch-videoad.js text/javascript
             const playerType = playerTypes[i];
             if (!streamInfo.BackupEncodingsStatus.has(playerType)) {
                 try {
+                    postMessage({ key: 'TASDiagnostic', event: 'backup-attempt', playerType });
                     const accessTokenResponse = await getAccessToken(streamInfo.ChannelName, playerType);
                     if (accessTokenResponse != null && accessTokenResponse.status !== 200) {
                         let errorBody = '';
@@ -553,6 +558,10 @@ twitch-videoad.js text/javascript
                                         encodingsM3u8 = normalLines.join('\n');
                                     }
                                     streamInfo.BackupEncodings = encodingsM3u8;
+                                    const backupLines = encodingsM3u8.split(/\r?\n/);
+                                    const backupQuality = parseAttributes(backupLines[backupLines.indexOf(streamM3u8Url) - 1]).RESOLUTION || 'unknown';
+                                    streamInfo.BackupQuality = backupQuality;
+                                    postMessage({ key: 'TASDiagnostic', event: 'backup-selected', playerType, quality: backupQuality, durationMs: Date.now() - backupSearchStart });
                                     setStreamInfoUrls(streamInfo, encodingsM3u8);
                                 }
                             }
@@ -973,7 +982,9 @@ twitch-videoad.js text/javascript
                     });
                 }
                 url = url.trimEnd();
-                if (url.endsWith('m3u8')) {
+                let parsedRequestUrl;
+                try { parsedRequestUrl = new URL(url); } catch { return realFetch(url, options); }
+                if (!parsedRequestUrl.pathname.includes('/channel/hls/') && (StreamInfosByUrl[url] || parsedRequestUrl.pathname.endsWith('.m3u8'))) {
                     return new Promise(function(resolve, reject) {
                         const processAfter = async function(response) {
                             if (response.status === 200) {
@@ -988,7 +999,7 @@ twitch-videoad.js text/javascript
                             }
                         };
                         realFetch(url, options).then(function(response) {
-                            processAfter(response);
+                            return processAfter(response);
                         })['catch'](function(err) {
                             const errMsg = String(err?.message || err);
                             if (err?.name !== 'AbortError' && !/cancel|abort/i.test(errMsg)) console.log('fetch hook err ' + err);
@@ -1005,48 +1016,45 @@ twitch-videoad.js text/javascript
                         tempUrl.searchParams.delete('parent_domains');
                         url = tempUrl.toString();
                     }
-                    return new Promise(async function(resolve, reject) {
-                        // - First m3u8 request is the m3u8 with the video encodings (360p,480p,720p,etc).
-                        // - Second m3u8 request is the m3u8 for the given encoding obtained in the first request. At this point we will know if there's ads.
-                        let streamInfo = StreamInfos[channelName];
-                        if (streamInfo != null && streamInfo.Encodings != null && (await realFetch(streamInfo.Encodings.match(/^https:.*\.m3u8$/m)?.[0])).status !== 200) {
-                            // The cached encodings are dead (the stream probably restarted)
-                            streamInfo = null;
-                        }
-                        let serverTime = null;
-                        if (streamInfo == null || streamInfo.Encodings == null) {
-                            StreamInfos[channelName] = streamInfo = createStreamInfo(channelName, (new URL(url)).search);
-                            const encodingsM3u8Response = await realFetch(url, options);
-                            if (encodingsM3u8Response != null && encodingsM3u8Response.status === 200) {
-                                const encodingsM3u8 = resolvePlaylistUrls(await encodingsM3u8Response.text(), encodingsM3u8Response.url || url);
-                                streamInfo.Encodings = encodingsM3u8;
-                                setStreamInfoUrls(streamInfo, encodingsM3u8);
-                                serverTime = getServerTimeFromM3u8(encodingsM3u8);
-                                const resolutionInfo = streamInfo.Urls.values().next().value;
-                                const streamM3u8Response = await realFetch(resolutionInfo.Url);
-                                if (streamM3u8Response.status == 200) {
-                                    const streamM3u8 = resolvePlaylistUrls(await streamM3u8Response.text(), streamM3u8Response.url || resolutionInfo.Url);
-                                    if (hasAdTags(streamM3u8) || SimulatedAdsDepth > 0) {
-                                        await onFoundAd(streamInfo, streamM3u8, false, realFetch, resolutionInfo.Url, resolutionInfo);
-                                    }
-                                } else {
-                                    resolve(streamM3u8Response);
-                                    return;
+                    // - First m3u8 request is the m3u8 with the video encodings (360p,480p,720p,etc).
+                    // - Second m3u8 request is the m3u8 for the given encoding obtained in the first request. At this point we will know if there's ads.
+                    let streamInfo = StreamInfos[channelName];
+                    if (streamInfo != null && streamInfo.Encodings != null && (await realFetch(streamInfo.Encodings.match(/^https:.*\.m3u8$/m)?.[0])).status !== 200) {
+                        // The cached encodings are dead (the stream probably restarted)
+                        streamInfo = null;
+                    }
+                    let serverTime = null;
+                    if (streamInfo == null || streamInfo.Encodings == null) {
+                        StreamInfos[channelName] = streamInfo = createStreamInfo(channelName, (new URL(url)).search);
+                        const encodingsM3u8Response = await realFetch(url, options);
+                        if (encodingsM3u8Response != null && encodingsM3u8Response.status === 200) {
+                            const encodingsM3u8 = resolvePlaylistUrls(await encodingsM3u8Response.text(), encodingsM3u8Response.url || url);
+                            streamInfo.Encodings = encodingsM3u8;
+                            setStreamInfoUrls(streamInfo, encodingsM3u8);
+                            serverTime = getServerTimeFromM3u8(encodingsM3u8);
+                            const resolutionInfo = streamInfo.Urls.values().next().value;
+                            const streamM3u8Response = await realFetch(resolutionInfo.Url);
+                            if (streamM3u8Response.status == 200) {
+                                const streamM3u8 = resolvePlaylistUrls(await streamM3u8Response.text(), streamM3u8Response.url || resolutionInfo.Url);
+                                if (hasAdTags(streamM3u8) || SimulatedAdsDepth > 0) {
+                                    await onFoundAd(streamInfo, streamM3u8, false, realFetch, resolutionInfo.Url, resolutionInfo);
                                 }
                             } else {
-                                resolve(encodingsM3u8Response);
-                                return;
+                                return streamM3u8Response;
                             }
+                        } else {
+                            return encodingsM3u8Response;
                         }
-                        if (!serverTime) {
-                            const encodingsM3u8Response = await realFetch(url, options);
-                            if (encodingsM3u8Response != null && encodingsM3u8Response.status === 200) {
-                                serverTime = getServerTimeFromM3u8(await encodingsM3u8Response.text());
-                            }
+                    }
+                    if (!serverTime) {
+                        const encodingsM3u8Response = await realFetch(url, options);
+                        if (encodingsM3u8Response != null && encodingsM3u8Response.status === 200) {
+                            serverTime = getServerTimeFromM3u8(await encodingsM3u8Response.text());
                         }
-                        streamInfo.IsMovingOffBackupEncodings = false;
-                        resolve(new Response(replaceServerTimeInM3u8(streamInfo.BackupEncodings ? streamInfo.BackupEncodings : streamInfo.Encodings, serverTime)));
-                    });
+                    }
+                    streamInfo.IsMovingOffBackupEncodings = false;
+                    return new Response(replaceServerTimeInM3u8(streamInfo.BackupEncodings ? streamInfo.BackupEncodings : streamInfo.Encodings, serverTime));
+
                 }
             }
             return realFetch.apply(this, arguments);
@@ -1231,7 +1239,9 @@ twitch-videoad.js text/javascript
         window.fetch = maskAsNative(function(url, init) {
             const requestUrl = typeof url === 'string' ? url : url instanceof URL ? url.href : url instanceof Request ? url.url : '';
             if (requestUrl) {
-                if (requestUrl.includes('gql')) {
+                let gqlUrl;
+                try { gqlUrl = new URL(requestUrl); } catch {}
+                if (gqlUrl?.origin === 'https://gql.twitch.tv' && gqlUrl.pathname === '/gql' && !gqlUrl.username && !gqlUrl.password) {
                     const headers = new Headers(init?.headers ?? (url instanceof Request ? url.headers : undefined));
                     let deviceId = headers.get('X-Device-Id');
                     if (typeof deviceId !== 'string') {
@@ -1251,22 +1261,18 @@ twitch-videoad.js text/javascript
                         hasLoggedHeaders = true;
                         console.log('[AD DEBUG] GQL headers captured — DeviceId: ' + (gql_device_id ? 'yes' : 'no') + ', Auth: ' + (AuthorizationHeader ? 'yes' : 'no') + ', Integrity: ' + (ClientIntegrityHeader ? 'yes' : 'no'));
                     }
-                    // Get rid of mini player above chat - TODO: Reject this locally instead of having server reject it
-                    if (init && typeof init?.body === 'string' && init.body.includes('PlaybackAccessToken') && init.body.includes('picture-by-picture')) {
-                        init.body = '';
-                    }
                     if (OPT_FORCE_ACCESS_TOKEN_PLAYER_TYPE && typeof init?.body === 'string' && init.body.includes('PlaybackAccessToken')) {
                         let replacedPlayerType = '';
                         const newBody = JSON.parse(init.body);
                         if (Array.isArray(newBody)) {
                             for (let i = 0; i < newBody.length; i++) {
-                                if (newBody[i]?.variables?.playerType && newBody[i]?.variables?.playerType !== OPT_FORCE_ACCESS_TOKEN_PLAYER_TYPE) {
+                                if (newBody[i]?.operationName?.includes('PlaybackAccessToken') && newBody[i]?.variables?.playerType && newBody[i]?.variables?.playerType !== OPT_FORCE_ACCESS_TOKEN_PLAYER_TYPE) {
                                     replacedPlayerType = newBody[i].variables.playerType;
                                     newBody[i].variables.playerType = OPT_FORCE_ACCESS_TOKEN_PLAYER_TYPE;
                                 }
                             }
                         } else {
-                            if (newBody?.variables?.playerType && newBody?.variables?.playerType !== OPT_FORCE_ACCESS_TOKEN_PLAYER_TYPE) {
+                            if (newBody?.operationName?.includes('PlaybackAccessToken') && newBody?.variables?.playerType && newBody?.variables?.playerType !== OPT_FORCE_ACCESS_TOKEN_PLAYER_TYPE) {
                                 replacedPlayerType = newBody.variables.playerType;
                                 newBody.variables.playerType = OPT_FORCE_ACCESS_TOKEN_PLAYER_TYPE;
                             }
@@ -1289,6 +1295,13 @@ twitch-videoad.js text/javascript
         }, 'fetch');
     }
     function updateAdblockBanner(data) {
+        if (typeof window !== 'undefined' && window.__tasDiagnostics) {
+            const current = window.__tasDiagnostics.current;
+            if (!!data.hasAds !== current.inAdBreak) recordTASDiagnostic({ event: data.hasAds ? 'ad-start' : 'ad-end' });
+            if (data.hasAds && data.activeBackupPlayerType && data.activeBackupPlayerType !== current.backup) {
+                recordTASDiagnostic({ event: 'backup-selected', playerType: data.activeBackupPlayerType, quality: data.backupQuality || 'unknown' });
+            }
+        }
         const playerRootDiv = document.querySelector('.video-player');
         if (playerRootDiv != null) {
             let adBlockDiv = null;
@@ -1379,6 +1392,7 @@ twitch-videoad.js text/javascript
         };
     }
     function reloadTwitchPlayer(isPausePlay, reloadKind) {
+        recordTASDiagnostic({ event: isPausePlay ? 'pause-play' : 'reload-request', reason: reloadKind || 'normal' });
         const playerAndState = getPlayerAndState();
         if (!playerAndState) {
             console.log('Could not find react root');
@@ -1397,9 +1411,10 @@ twitch-videoad.js text/javascript
         if (player.isPaused() || player.core?.paused) {
             return;
         }
-        // Reload cooldown — early reloads (worker-triggered thin-cache fast path) bypass the
-        // gate but still update bookkeeping so 3+ rapid early reloads still trigger the 90s
-        // escalation that protects against runaway loops.
+        // Reload cooldown — skip if last reload was too recent (breaks CSAI cascades).
+        // Early reloads (worker-triggered thin-cache / freeze-recovery fast path) bypass
+        // the gate but still update bookkeeping so 3+ rapid early reloads still escalate
+        // the cooldown the same way buffer-monitor reloads would.
         if (!isPausePlay && ReloadCooldownSeconds > 0) {
             const now = Date.now();
             const cooldownMs = ReloadCooldownSeconds * 1000;
@@ -1411,6 +1426,7 @@ twitch-videoad.js text/javascript
                 }
                 console.log('[AD DEBUG] Bypassing cooldown for early reload (thin-cache fast path) — ' + Math.round((cooldownMs - (now - lastReloadTimestamp)) / 1000) + 's would have remained');
             }
+            // Auto-escalate: if 3+ reloads in 5 minutes, triple the cooldown
             reloadTimestamps.push(now);
             const fiveMinAgo = now - 300000;
             while (reloadTimestamps.length > 0 && reloadTimestamps[0] < fiveMinAgo) { reloadTimestamps.shift(); }
@@ -1461,8 +1477,8 @@ twitch-videoad.js text/javascript
                 localStorage.setItem(lsKeyQuality, JSON.stringify({default:player.core.state.quality.group}));
             }
         } catch {}
-        // Pre-mute through hard reload to hide MSE-teardown audio click; restored on
-        // `canplay` with 1500ms cap.
+        // Pre-mute through hard reload (setSrc always tears down MSE) to hide the audio
+        // click at the MSE discontinuity boundary. Restored on `canplay` with 1500ms cap.
         try {
             const v = document.querySelector('video');
             if (v && !v.muted) {
@@ -1486,7 +1502,7 @@ twitch-videoad.js text/javascript
                 document.addEventListener('canplay', listener, true);
                 document.addEventListener('playing', listener, true);
                 document.addEventListener('loadeddata', listener, true);
-                setTimeout(restore, 4000);
+                setTimeout(restore, 4000);// Bumped 2500ms → 4000ms for Edge slow-init slack.
             }
         } catch {}
         playerState.setSrc({ isNewMediaPlayerInstance: true, refreshAccessToken: true });
@@ -1524,7 +1540,198 @@ twitch-videoad.js text/javascript
             }, 3000);
         }
     }
+    function getTASDiagnostics() {
+        const state = window.__tasDiagnostics;
+        if (!state) return null;
+        return {
+            schemaVersion: 1, evidence: 'local diagnostic events; not proof of live playback',
+            script: state.script, version: state.version,
+            elapsedMs: Math.max(0, Date.now() - state.startedAt),
+            current: { ...state.current }, events: state.events.map(event => ({ ...event }))
+        };
+    }
+    function recordTASDiagnostic(data) {
+        if (typeof window === 'undefined' || !window.__tasDiagnostics) return;
+        const state = window.__tasDiagnostics;
+        const allowedEvents = ['backup-attempt', 'backup-selected', 'ad-start', 'ad-end', 'reload-request', 'pause-play', 'worker-error'];
+        if (!allowedEvents.includes(data.event)) return;
+        const entry = { atMs: Math.max(0, Date.now() - state.startedAt), event: data.event };
+        if (data.playerType !== undefined) {
+            entry.playerType = ['popout', 'embed', 'site', 'mobile_web', 'autoplay'].includes(data.playerType) ? data.playerType : 'unknown';
+        }
+        if (data.quality !== undefined) entry.quality = /^\d{1,5}x\d{1,5}$/.test(data.quality) ? data.quality : 'unknown';
+        if (Number.isFinite(data.durationMs)) entry.durationMs = Math.min(60000, Math.max(0, data.durationMs));
+        if (data.event === 'reload-request') {
+            entry.reason = ['early', 'worker-error', 'normal'].includes(data.reason) ? data.reason : 'normal';
+            state.current.recovery = entry.reason;
+        }
+        if (data.event === 'backup-selected') {
+            state.current.backup = entry.playerType || 'unknown';
+            state.current.quality = entry.quality || 'unknown';
+        }
+        if (data.event === 'ad-start' || data.event === 'ad-end') {
+            state.current.inAdBreak = data.event === 'ad-start';
+            state.current.backup = 'none';
+            state.current.quality = 'unknown';
+        }
+        state.events.push(entry);
+        if (state.events.length > 100) state.events.shift();
+        state.render();
+    }
+    function initializeTASControls(script, version) {
+        if (window.__tasDiagnostics || !document.body) return;
+        const state = window.__tasDiagnostics = { script, version, startedAt: Date.now(), events: [],
+            current: { backup: 'none', quality: 'unknown', recovery: 'none', inAdBreak: false }, render() {} };
+        const host = document.createElement('div');
+        host.id = 'tas-controls';
+        host.style.cssText = 'position:fixed;right:12px;bottom:12px;z-index:2147483646';
+        const root = host.attachShadow({ mode: 'open' });
+        const style = document.createElement('style');
+        style.textContent = `
+            :host { font: 14px/1.5 system-ui, sans-serif; color: #eee; }
+            button, input, select { font: inherit; }
+            button { padding: 8px 12px; min-height: 36px; cursor: pointer; }
+            button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid #72bcff; outline-offset: 2px; }
+            dialog { color: #eee; background: #202024; border: 1px solid #777; border-radius: 8px; padding: 24px; width: min(460px, calc(100vw - 64px)); max-height: calc(100dvh - 64px); overflow: auto; }
+            dialog::backdrop { background: rgb(0 0 0 / 65%); }
+            h2 { margin: 0 0 12px; font-size: 20px; }
+            label { display: block; margin-top: 12px; }
+            label.toggle { display: flex; align-items: center; gap: 8px; min-height: 32px; }
+            input[type=checkbox] { width: 18px; height: 18px; flex: none; }
+            summary { cursor: pointer; padding: 12px 0; }
+            input:not([type=checkbox]), select { display: block; box-sizing: border-box; width: 100%; padding: 6px; }
+            small { display: block; color: #ccc; }
+            .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+            #details { background: #202024; padding: 8px; max-width: 320px; margin-bottom: 8px; }
+            #feedback { min-height: 1.5em; }
+        `;
+        root.appendChild(style);
+        const create = (tag, parent, text) => {
+            const node = document.createElement(tag);
+            if (text) node.textContent = text;
+            parent.appendChild(node);
+            return node;
+        };
+        const details = create('div', root);
+        details.id = 'details';
+        details.hidden = true;
+        const trigger = create('button', root, 'Ad blocker settings');
+        trigger.type = 'button';
+        const dialog = create('dialog', root);
+        dialog.setAttribute('aria-labelledby', 'tas-title');
+        create('h2', dialog, 'Ad blocker settings').id = 'tas-title';
+        create('p', dialog, script + ' ' + version + '. Changes apply after reloading Twitch.');
+        const form = create('form', dialog);
+        const definitions = [
+            ['playerType', 'Token player type', 'popout', ['popout', 'embed', 'site', 'mobile_web', 'autoplay'], 'Autoplay may limit quality to 360p.'],
+            ['reloadPlayerAfterAd', 'Prefer a reload after ads', true, 'boolean', 'Required recovery resets can still run when disabled.'],
+            ['pinBackupPlayerType', 'Prefer the last working backup', script === 'vaft', 'boolean'],
+            ['hideAdOverlay', 'Hide the blocking-ads banner', false, 'boolean'],
+            ['showDiagnostics', 'Show backup and recovery status', false, 'boolean'],
+            ['reloadCooldownSeconds', 'Reload cooldown in seconds', 30, [0, 3600, 1], '0 disables the cooldown.'],
+            ['earlyReloadPollThreshold', 'Early reload poll threshold', script === 'vaft' ? 3 : 5, [0, 100, 1], '0 disables early reloads. A thin recovery cache can trigger sooner.']
+        ];
+        if (script === 'vaft') definitions.push(
+            ['driftCorrectionRate', 'Catch-up playback speed', 1.1, [0, 2, 0.05], '0 disables catch-up.'],
+            ['preferLowQualityBackup', 'Allow low-quality backup recovery', true, 'boolean'],
+            ['backupSwapFirst', 'Try backup streams before stripping', true, 'boolean'],
+            ['fastAutoplayFirstTry', 'Reuse a successful autoplay fallback', true, 'boolean'],
+            ['recoverFromSilentMute', 'Recover from silent player muting', true, 'boolean'],
+            ['disableAdSpoofing', 'Disable ad-completion spoofing', true, 'boolean'],
+            ['disablePostBreakWedge', 'Disable post-break video recovery', false, 'boolean'],
+            ['disableReloadCap', 'Allow unlimited recovery reloads', false, 'boolean'],
+            ['iosSoftReload', 'Preserve the player on Apple touch devices', true, 'boolean']
+        );
+        let advanced;
+        const fields = definitions.map(([key, title, fallback, type, hint], index) => {
+            if (index === 7) {
+                advanced = create('details', form);
+                create('summary', advanced, 'Advanced recovery settings');
+            }
+            const parent = advanced || form;
+            const id = 'tas-' + key;
+            const label = create('label', parent, title);
+            label.htmlFor = id;
+            const input = create(Array.isArray(type) && typeof type[0] === 'string' ? 'select' : 'input', parent);
+            input.id = id;
+            if (type === 'boolean') { input.type = 'checkbox'; label.className = 'toggle'; label.prepend(input); }
+            else if (input.tagName === 'SELECT') {
+                for (const value of type) { const option = create('option', input, value); option.value = value; }
+            } else {
+                input.type = 'number'; input.min = type[0]; input.max = type[1]; input.step = type[2]; input.required = true;
+            }
+            if (hint) {
+                const help = create('small', parent, hint);
+                help.id = id + '-hint'; input.setAttribute('aria-describedby', help.id);
+            }
+            return { key, fallback, type, input };
+        });
+        const feedback = create('p', form);
+        feedback.id = 'feedback'; feedback.setAttribute('role', 'status');
+        const actions = create('div', form); actions.className = 'actions';
+        const save = create('button', actions, 'Save settings'); save.type = 'submit';
+        const reset = create('button', actions, 'Reset these settings'); reset.type = 'button';
+        const download = create('button', actions, 'Export diagnostics'); download.type = 'button';
+        const close = create('button', actions, 'Close'); close.type = 'button';
+        const storageKey = key => 'twitchAdSolutions_' + key;
+        const populate = defaults => {
+            for (const field of fields) {
+                const stored = defaults ? null : localStorage.getItem(storageKey(field.key));
+                const value = stored ?? field.fallback;
+                if (field.type === 'boolean') field.input.checked = String(value) === 'true';
+                else field.input.value = value;
+            }
+        };
+        state.render = () => {
+            details.textContent = 'Backup: ' + state.current.backup + ' | Quality: ' + state.current.quality
+                + ' | Last recovery request: ' + state.current.recovery;
+        };
+        const show = () => {
+            feedback.textContent = '';
+            try { populate(false); } catch { feedback.textContent = 'Browser storage is unavailable. Settings cannot be saved.'; }
+            dialog.showModal();
+        };
+        trigger.addEventListener('click', show);
+        close.addEventListener('click', () => dialog.close());
+        dialog.addEventListener('close', () => trigger.focus());
+        const persist = defaults => {
+            const snapshot = new Map();
+            try {
+                for (const field of fields) snapshot.set(storageKey(field.key), localStorage.getItem(storageKey(field.key)));
+                for (const field of fields) {
+                    const key = storageKey(field.key);
+                    if (defaults) localStorage.removeItem(key);
+                    else localStorage.setItem(key, field.type === 'boolean' ? String(field.input.checked) : field.input.value);
+                }
+                details.hidden = localStorage.getItem(storageKey('showDiagnostics')) !== 'true';
+                if (defaults) populate(true);
+                feedback.textContent = 'Settings ' + (defaults ? 'reset' : 'saved') + '. Reload Twitch to apply playback changes.';
+            } catch {
+                for (const [key, value] of snapshot) {
+                    try { if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, value); } catch { /* Storage can remain unavailable. */ }
+                }
+                feedback.textContent = 'Could not save settings. Browser storage is unavailable.';
+            }
+        };
+        form.addEventListener('submit', event => {
+            event.preventDefault();
+            if (form.reportValidity()) persist(false);
+        });
+        reset.addEventListener('click', () => persist(true));
+        download.addEventListener('click', () => {
+            const report = getTASDiagnostics();
+            const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2) + '\n'], { type: 'application/json' }));
+            const link = create('a', root);
+            link.href = url; link.download = 'twitch-ad-solutions-diagnostics.json'; link.click(); link.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        });
+        document.body.appendChild(host);
+        try { details.hidden = localStorage.getItem(storageKey('showDiagnostics')) !== 'true'; } catch { /* Settings remain accessible without storage. */ }
+        state.render();
+        window.twitchAdSolutionsTools = { openSettings: show, diagnostics: getTASDiagnostics };
+    }
     function onContentLoaded() {
+        initializeTASControls('video-swap-new', '1.91');
         if (document.getElementById('seventv-extension')) {
             console.log('[AD DEBUG] Warning: 7TV extension detected — may cause black screen or buffering issues. If you experience problems, try disabling 7TV.');
         }
