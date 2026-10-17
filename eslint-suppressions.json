@@ -45,9 +45,6 @@
     }
   },
   "video-swap-new/video-swap-new-ublock-origin.js": {
-    "no-async-promise-executor": {
-      "count": 1
-    },
     "no-empty": {
       "count": 1
     },
@@ -62,9 +59,6 @@
     }
   },
   "video-swap-new/video-swap-new.user.js": {
-    "no-async-promise-executor": {
-      "count": 1
-    },
     "no-empty": {
       "count": 1
     },

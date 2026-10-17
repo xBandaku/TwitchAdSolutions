@@ -1,3 +1,13 @@
+## v68.5.31 (2026-10-17)
+
+- Preventive hardening for eight synthetic edge cases: query-bearing media URLs, redirected master URL resolution, interrupted playlist-body reads, picture-by-picture GraphQL batches, omitted strip fetch options, drift correction across player replacement, unrelated-host header capture, and binary Brave retry bodies.
+- Preserve other batched operations when normalizing token player types. Restrict Twitch header capture to the HTTPS GQL endpoint. Restore the original video's playback speed when catch-up ends or the player changes.
+- Add a settings dialog to vaft and video-swap-new with input validation and reset controls, an optional backup/quality/recovery status display, and a local diagnostic export capped at 100 events. Exports omit channel names, URLs, tokens and headers.
+- Replay existing unmodified sanitized v1/v2 captures through strip and both video-swap-new formats in addition to vaft. Keep missing enhanced-codec and redirected-master trigger coverage explicit. Update bug-report links to this fork.
+- Add regressions with verified failures against de54206 and passing results after the fixes. These tests do not establish current Twitch playback impact; no new live ad-break reproduction is claimed.
+- Versions: vaft 68.5.31 (internal 116), video-swap-new 1.91 (internal 59), strip 1.12 (internal 29), Brave helper 1.3.5 (internal 9).
+- Local validation on Windows with Node 24: lint, Node suites, packaging and four Python tests passed. Browser fixtures passed 220 tests, with 20 documented Windows WebKit PCM-media skips. All 21 targeted regressions failed at de54206 for the expected reasons and passed after the fixes.
+
 ## v68.5.30 (2026-10-16)
 
 - Preventive hardening: skip AVC rewriting for HEVC and AV1 variants without resolution metadata. Preserve those entries so a missing optional field cannot reject the master-playlist fetch. Reproduced with synthetic inputs; current Twitch playback impact is unconfirmed.

@@ -9,7 +9,7 @@ const cleanPlaylist = '#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2.000,live\nhtt
 const capturedDirectory = path.join(__dirname, 'fixtures/captured');
 for (const name of fs.readdirSync(capturedDirectory).filter(file => file.endsWith('.json'))) {
     const capture = JSON.parse(fs.readFileSync(path.join(capturedDirectory, name), 'utf8'));
-    for (const file of ['vaft/vaft.user.js', 'vaft/vaft-ublock-origin.js']) {
+    for (const file of scripts.filter(script => script.worker).map(script => script.file)) {
         test('captured response: ' + name + ' replays in the injected worker for ' + file, async ({ page, context }, testInfo) => {
             await boot(page, context, file);
             for (const exchange of [capture.master, capture.media]) {
@@ -27,13 +27,22 @@ for (const name of fs.readdirSync(capturedDirectory).filter(file => file.endsWit
                 const source = `
                     (async () => {
                         try {
+                            let processed = 0;
+                            if (typeof processM3U8 === 'function') {
+                                const original = processM3U8;
+                                processM3U8 = (...args) => { processed++; return original(...args); };
+                            } else {
+                                const original = stripAdSegments;
+                                stripAdSegments = (...args) => { processed++; return original(...args); };
+                            }
                             const master = await fetch(${JSON.stringify(masterUrl)});
                             const masterBody = await master.text();
                             const media = await fetch(${JSON.stringify(mediaUrl)});
                             self.postMessage({ captured: true, masterStatus: master.status, masterBody,
                                 mediaStatus: media.status, mediaBody: await media.text(),
-                                resolutions: ActiveStreamInfo.ResolutionList.length,
-                                rewriteRan: ActiveStreamInfo.ModifiedM3U8 !== null });
+                                processed,
+                                resolutions: typeof ActiveStreamInfo !== 'undefined' && ActiveStreamInfo ? ActiveStreamInfo.ResolutionList.length : null,
+                                rewriteRan: typeof ActiveStreamInfo !== 'undefined' && ActiveStreamInfo ? ActiveStreamInfo.ModifiedM3U8 !== null : false });
                         } catch (error) { self.postMessage({ captured: true, error: error.message }); }
                     })();
                 `;
@@ -50,8 +59,11 @@ for (const name of fs.readdirSync(capturedDirectory).filter(file => file.endsWit
             expect(result.mediaStatus).toBe(capture.media.response.status);
             expect(result.masterBody).toContain('#EXTM3U');
             expect(result.mediaBody).toContain('#EXTM3U');
-            expect(result.resolutions).toBe(capture.master.coverage.withResolution);
-            expect(result.rewriteRan).toBe(capture.master.coverage.avcWithResolution > 0 && capture.master.coverage.enhancedWithResolution > 0);
+            expect(result.processed).toBeGreaterThan(0);
+            if (file.startsWith('vaft/')) {
+                expect(result.resolutions).toBe(capture.master.coverage.withResolution);
+                expect(result.rewriteRan).toBe(capture.master.coverage.avcWithResolution > 0 && capture.master.coverage.enhancedWithResolution > 0);
+            }
             testInfo.annotations.push({ type: 'evidence', description: 'Captured response replay on a synthetic page with a scripted worker consumer and CORS headers. No live playback reproduction.' });
             testInfo.annotations.push({ type: 'coverage', description: 'Enhanced-codec rewrite: ' + (result.rewriteRan ? 'exercised' : 'NOT EXERCISED') });
         });
@@ -658,6 +670,15 @@ test('synthetic resilience: Brave userscript preserves the original response whe
     })).toEqual({ errors: [{ message: 'failed integrity check' }] });
 });
 
+test('synthetic resilience: Brave preserves byte-array bodies through the retry transport', async ({ page, context }) => {
+    await boot(page, context, 'vaft/twitch-brave-fix.user.js');
+    const result = await page.evaluate(async () => {
+        await fetch('https://gql.twitch.tv/gql', { method: 'POST', body: new Uint8Array([0, 128, 255, 65]) });
+        return Array.from(new Uint8Array(window.__gmCalls[0].data));
+    });
+    expect(result).toEqual([0, 128, 255, 65]);
+});
+
 for (const body of [
     [{ data: { fixtureMutation: { id: 'written-once' } } }, { errors: [{ message: 'failed integrity check' }] }],
     { data: { fixtureMutation: { id: 'written-once' } }, errors: [{ message: 'failed integrity check' }] },
@@ -718,3 +739,48 @@ test('synthetic resilience: Brave userscript bounds a silent manager request', a
     expect(await page.evaluate(() => window.__retryResult)).toEqual({ errors: [{ message: 'failed integrity check' }] });
     expect(await page.evaluate(() => window.__gmAborts)).toBe(1);
 });
+
+for (const file of scripts.filter(script => /^(vaft\/vaft|video-swap-new\/)/.test(script.file)).map(script => script.file)) {
+    test('synthetic resilience: settings validate, reset, export and restore keyboard focus in ' + file, async ({ page, context }) => {
+        await boot(page, context, file);
+        const trigger = page.getByRole('button', { name: 'Ad blocker settings', exact: true });
+        await trigger.click();
+        const dialog = page.getByRole('dialog', { name: 'Ad blocker settings' });
+        await expect(dialog).toBeVisible();
+        const cooldown = dialog.getByLabel('Reload cooldown in seconds');
+        await cooldown.fill('-1');
+        await dialog.getByRole('button', { name: 'Save settings' }).click();
+        expect(await page.evaluate(() => localStorage.getItem('twitchAdSolutions_reloadCooldownSeconds'))).toBeNull();
+        await expect(cooldown).toBeFocused();
+        await cooldown.fill('45');
+        await dialog.getByLabel('Show backup and recovery status').check();
+        await dialog.getByRole('button', { name: 'Save settings' }).click();
+        expect(await page.evaluate(() => localStorage.getItem('twitchAdSolutions_reloadCooldownSeconds'))).toBe('45');
+        await expect(dialog.getByRole('status')).toContainText('Settings saved');
+        await page.keyboard.press('Escape');
+        await expect(dialog).not.toBeVisible();
+        await expect(trigger).toBeFocused();
+        await expect(page.locator('#tas-controls').locator('#details')).toBeVisible();
+        await page.evaluate(() => {
+            const source = `self.postMessage({key:'TASDiagnostic',event:'backup-selected',playerType:'autoplay',quality:'640x360',durationMs:120,authorization:'OAuth private',url:'https://private.invalid/token'});`;
+            window.__diagnosticWorker = new Worker(URL.createObjectURL(new Blob([source], { type: 'text/javascript' })));
+        });
+        await expect(page.locator('#tas-controls').locator('#details')).toContainText('640x360');
+        await trigger.click();
+        const pendingDownload = page.waitForEvent('download');
+        await dialog.getByRole('button', { name: 'Export diagnostics' }).click();
+        const download = await pendingDownload;
+        expect(download.suggestedFilename()).toBe('twitch-ad-solutions-diagnostics.json');
+        const report = JSON.parse(fs.readFileSync(await download.path(), 'utf8'));
+        expect(report.current).toMatchObject({ backup: 'autoplay', quality: '640x360' });
+        expect(JSON.stringify(report)).not.toContain('private');
+        expect(report.events.some(event => event.event === 'backup-selected' && event.durationMs === 120)).toBe(true);
+        await dialog.getByRole('button', { name: 'Reset these settings' }).click();
+        expect(await page.evaluate(() => localStorage.getItem('twitchAdSolutions_reloadCooldownSeconds'))).toBeNull();
+        await expect(cooldown).toHaveValue('30');
+        await expect(page.locator('#tas-controls').locator('#details')).toBeHidden();
+        await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+        await expect(trigger).toBeFocused();
+        await page.evaluate(() => window.__diagnosticWorker.terminate());
+    });
+}

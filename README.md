@@ -46,7 +46,11 @@ To uninstall, remove the filter and this resource URL. Set `userResourcesLocatio
 
 ## Configuration
 
-No configuration is required. To change a setting, open the browser console on Twitch, set its `localStorage` value, then reload. Each setting uses the `twitchAdSolutions_` prefix. For example, hide the "Blocking ads" banner with:
+No configuration is required. In vaft and video-swap-new, use **Ad blocker settings** in the bottom-right corner of Twitch to change playback preferences. The panel validates values and can reset its settings to defaults. Reload Twitch after saving to apply playback changes.
+
+Enable **Show backup and recovery status** for the backup type, selected playlist resolution (or `unknown`), and latest recovery request. **Export diagnostics** downloads the last 100 local events, including backup attempts and selection timing. It excludes channel names, playlist URLs, tokens and request headers; it sends nothing automatically. An event records a request or selection, not proof that playback recovered.
+
+Console configuration is also available. Each setting uses the `twitchAdSolutions_` prefix. For example, hide the "Blocking ads" banner with:
 
 ```js
 localStorage.setItem('twitchAdSolutions_hideAdOverlay', 'true');

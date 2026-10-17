@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TwitchAdSolutions (vaft)
 // @namespace    https://github.com/ryanbr/TwitchAdSolutions
-// @version      68.5.30
+// @version      68.5.31
 // @description  Multiple solutions for blocking Twitch ads (vaft)
 // @updateURL    https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft.user.js
 // @downloadURL  https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft.user.js
@@ -48,7 +48,7 @@
         }
     }
     'use strict';
-    const ourTwitchAdSolutionsVersion = 115;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 116;// Used to prevent conflicts with outdated versions of the scripts
     console.log('[AD DEBUG] TwitchAdSolutions vaft v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
         console.log('[AD DEBUG] CONFLICT: vaft v' + ourTwitchAdSolutionsVersion + ' skipped — another script already active (v' + window.twitchAdSolutionsVersion + '). Remove duplicate scripts.');
@@ -510,6 +510,7 @@
                     if (!isCurrentStreamMessage(this, e.data)) return;
                     if (e.data.sessionId < latestStreamSession) return;
                     if (e.data.sessionId) latestStreamSession = e.data.sessionId;
+                    if (e.data.key === 'TASDiagnostic') recordTASDiagnostic(e.data);
                     if (e.data.key == 'UpdateAdBlockBanner') {
                         updateAdblockBanner(e.data);
                         // Track backup stream switches (start and end of ad break)
@@ -523,9 +524,7 @@
                         playerBufferState.inAdBreak = !!e.data.hasAds;
                         // Clear drift catch-up when ads start — don't run 1.1x during ad handling
                         if (e.data.hasAds && (driftCatchUpInterval || driftCatchUpTimeout)) {
-                            if (driftCatchUpInterval) { clearInterval(driftCatchUpInterval); driftCatchUpInterval = null; }
-                            if (driftCatchUpTimeout) { clearTimeout(driftCatchUpTimeout); driftCatchUpTimeout = null; }
-                            try { getPlayerVideoElement().playbackRate = 1.0; } catch {}
+                            stopDriftCorrection();
                         }
                     } else if (e.data.key == 'PauseResumePlayer') {
                         doTwitchPlayerTask(true, false);
@@ -664,13 +663,7 @@
                     return new Promise(function(resolve, reject) {
                         const processAfter = async function(response) {
                             if (response.status == 200) {
-                                const masterLines = (await response.text()).split(/\r?\n/);
-                                for (let i = 0; i < masterLines.length - 1; i++) {
-                                    if (masterLines[i].startsWith('#EXT-X-STREAM-INF') && masterLines[i + 1].trim() && !masterLines[i + 1].startsWith('#')) {
-                                        masterLines[i + 1] = new URL(masterLines[i + 1].trim(), url).href;
-                                    }
-                                }
-                                const encodingsM3u8 = masterLines.join('\n');
+                                const encodingsM3u8 = resolvePlaylistUrls(await response.text(), response.url || url);
                                 const serverTime = getServerTimeFromM3u8(encodingsM3u8);
                                 if (masterRequestId !== MasterRequestSequence) { resolve(new Response(encodingsM3u8)); return; }
                                 let streamInfo = StreamInfos[channelName];
@@ -1643,6 +1636,7 @@
                         isFreshM3u8 = true;
                         backupColdTokenFetches++;
                         try {
+                            postStreamMessage(streamInfo, { key: 'TASDiagnostic', event: 'backup-attempt', playerType: realPlayerType });
                             const accessTokenResponse = await getAccessToken(streamInfo.ChannelName, realPlayerType, Math.min(BackupRequestTimeout, backupSearchDeadline - Date.now()));
                             if (accessTokenResponse.status === 200) {
                                 const accessToken = await accessTokenResponse.json();
@@ -1698,6 +1692,8 @@
                     if (encodingsM3u8) {
                         try {
                             const streamM3u8Url = getStreamUrlForResolution(encodingsM3u8, currentResolution, streamInfo);
+                            const backupLines = encodingsM3u8.split(/\r?\n/);
+                            const backupQuality = parseAttributes(backupLines[backupLines.indexOf(streamM3u8Url) - 1]).RESOLUTION || 'unknown';
                             const streamM3u8Response = await fetchPlaylist(streamM3u8Url, realFetch, Math.min(BackupRequestTimeout, backupSearchDeadline - Date.now()), true);
                             if (streamM3u8Response) {
                                 const m3u8Text = streamM3u8Response;
@@ -1721,6 +1717,7 @@
                                         }
                                         backupPlayerType = playerType;
                                         backupM3u8 = m3u8Text;
+                                        postStreamMessage(streamInfo, { key: 'TASDiagnostic', event: 'backup-selected', playerType, quality: backupQuality, durationMs: Date.now() - backupSearchStart });
                                         break;
                                     }
                                     if (hasAdTags(m3u8Text)) {
@@ -1733,6 +1730,7 @@
                                     if (isFullyCachedPlayerType || isDoingMinimalRequests) {
                                         backupPlayerType = playerType;
                                         backupM3u8 = m3u8Text;
+                                        postStreamMessage(streamInfo, { key: 'TASDiagnostic', event: 'backup-selected', playerType, quality: backupQuality, durationMs: Date.now() - backupSearchStart });
                                         break;
                                     }
                                     // Cycle through all player types looking for a clean backup. Only commit
@@ -1745,6 +1743,7 @@
                                         console.log('[AD DEBUG] All backup player types ad-laden — taking ' + playerType + ' as last-resort fallback (strip+recovery path will engage)');
                                         backupPlayerType = playerType;
                                         backupM3u8 = m3u8Text;
+                                        postStreamMessage(streamInfo, { key: 'TASDiagnostic', event: 'backup-selected', playerType, quality: backupQuality, durationMs: Date.now() - backupSearchStart });
                                         break;
                                     }
                                 }
@@ -2124,29 +2123,44 @@
     let playerForMonitoringBuffering = null;
     let driftCatchUpInterval = null;
     let driftCatchUpTimeout = null;
+    let driftCorrectionStop = null;
+    function stopDriftCorrection() {
+        if (driftCorrectionStop) driftCorrectionStop();
+    }
     function startDriftCorrection(videoElement) {
+        stopDriftCorrection();
         if (DriftCorrectionRate <= 1) return;
-        if (driftCatchUpInterval) { clearInterval(driftCatchUpInterval); driftCatchUpInterval = null; }
-        if (driftCatchUpTimeout) { clearTimeout(driftCatchUpTimeout); driftCatchUpTimeout = null; }
+        const previousRate = videoElement.playbackRate;
+        driftCorrectionStop = () => {
+            try {
+                if (videoElement.playbackRate === DriftCorrectionRate) videoElement.playbackRate = previousRate;
+            } finally {
+                clearInterval(driftCatchUpInterval);
+                clearTimeout(driftCatchUpTimeout);
+                driftCatchUpInterval = null;
+                driftCatchUpTimeout = null;
+                driftCorrectionStop = null;
+            }
+        };
         videoElement.playbackRate = DriftCorrectionRate;
         console.log('[AD DEBUG] Drift correction: catching up at ' + DriftCorrectionRate + 'x');
         driftCatchUpInterval = setInterval(() => {
             try {
                 const vid = getPlayerVideoElement();
+                if (vid !== videoElement || videoElement.playbackRate !== DriftCorrectionRate) {
+                    stopDriftCorrection();
+                    return;
+                }
                 if (vid && vid.buffered.length > 0) {
                     if (vid.buffered.end(vid.buffered.length - 1) - vid.currentTime <= 1) {
-                        vid.playbackRate = 1.0;
                         console.log('[AD DEBUG] Drift correction complete — resumed normal playback speed');
-                        clearInterval(driftCatchUpInterval); driftCatchUpInterval = null;
-                        if (driftCatchUpTimeout) { clearTimeout(driftCatchUpTimeout); driftCatchUpTimeout = null; }
+                        stopDriftCorrection();
                     }
                 }
-            } catch { clearInterval(driftCatchUpInterval); driftCatchUpInterval = null; }
+            } catch { stopDriftCorrection(); }
         }, 500);
         driftCatchUpTimeout = setTimeout(() => {
-            try { videoElement.playbackRate = 1.0; } catch {}
-            if (driftCatchUpInterval) { clearInterval(driftCatchUpInterval); driftCatchUpInterval = null; }
-            driftCatchUpTimeout = null;
+            stopDriftCorrection();
         }, 30000);
     }
     const playerBufferState = {
@@ -2660,6 +2674,13 @@
         }
     }
     function updateAdblockBanner(data) {
+        if (typeof window !== 'undefined' && window.__tasDiagnostics) {
+            const current = window.__tasDiagnostics.current;
+            if (!!data.hasAds !== current.inAdBreak) recordTASDiagnostic({ event: data.hasAds ? 'ad-start' : 'ad-end' });
+            if (data.hasAds && data.activeBackupPlayerType && data.activeBackupPlayerType !== current.backup) {
+                recordTASDiagnostic({ event: 'backup-selected', playerType: data.activeBackupPlayerType, quality: data.backupQuality || 'unknown' });
+            }
+        }
         if (!cachedPlayerRootDiv || !cachedPlayerRootDiv.isConnected) {
             cachedPlayerRootDiv = document.querySelector('.video-player');
         }
@@ -2786,6 +2807,7 @@
     })();
     // Pause/play or fully reload the Twitch player, preserving quality/volume settings
     function doTwitchPlayerTask(isPausePlay, isReload, reloadKind) {
+        if (isReload || isPausePlay) recordTASDiagnostic({ event: isReload ? 'reload-request' : 'pause-play', reason: reloadKind || 'normal' });
         const active = doTwitchPlayerTask.recovery;
         if (active) {
             if (active.isCurrent()) {
@@ -3130,7 +3152,9 @@
         window.fetch = maskAsNative(function(url, init) {
             const requestUrl = typeof url === 'string' ? url : url instanceof URL ? url.href : url instanceof Request ? url.url : '';
             if (requestUrl) {
-                if (requestUrl.includes('gql')) {
+                let gqlUrl;
+                try { gqlUrl = new URL(requestUrl); } catch {}
+                if (gqlUrl?.origin === 'https://gql.twitch.tv' && gqlUrl.pathname === '/gql' && !gqlUrl.username && !gqlUrl.password) {
                     const headers = new Headers(init?.headers ?? (url instanceof Request ? url.headers : undefined));
                     let deviceId = headers.get('X-Device-Id');
                     if (typeof deviceId !== 'string') {
@@ -3156,22 +3180,18 @@
                         hasLoggedHeaders = true;
                         console.log('[AD DEBUG] GQL headers captured — DeviceId: ' + (GQLDeviceID ? 'yes' : 'no') + ', Auth: ' + (AuthorizationHeader ? 'yes' : 'no') + ', Integrity: ' + (ClientIntegrityHeader ? 'yes' : 'no'));
                     }
-                    // Get rid of mini player above chat - TODO: Reject this locally instead of having server reject it
-                    if (init && typeof init?.body === 'string' && init.body.includes('PlaybackAccessToken') && init.body.includes('picture-by-picture')) {
-                        init.body = '';
-                    }
                     if (ForceAccessTokenPlayerType && typeof init?.body === 'string' && init.body.includes('PlaybackAccessToken')) {
                         let replacedPlayerType = '';
                         const newBody = JSON.parse(init.body);
                         if (Array.isArray(newBody)) {
                             for (let i = 0; i < newBody.length; i++) {
-                                if (newBody[i]?.variables?.playerType && newBody[i]?.variables?.playerType !== ForceAccessTokenPlayerType) {
+                                if (newBody[i]?.operationName?.includes('PlaybackAccessToken') && newBody[i]?.variables?.playerType && newBody[i]?.variables?.playerType !== ForceAccessTokenPlayerType) {
                                     replacedPlayerType = newBody[i].variables.playerType;
                                     newBody[i].variables.playerType = ForceAccessTokenPlayerType;
                                 }
                             }
                         } else {
-                            if (newBody?.variables?.playerType && newBody?.variables?.playerType !== ForceAccessTokenPlayerType) {
+                            if (newBody?.operationName?.includes('PlaybackAccessToken') && newBody?.variables?.playerType && newBody?.variables?.playerType !== ForceAccessTokenPlayerType) {
                                 replacedPlayerType = newBody.variables.playerType;
                                 newBody.variables.playerType = ForceAccessTokenPlayerType;
                             }
@@ -3191,7 +3211,198 @@
         }, 'fetch');
     }
     // Set up visibility overrides and localStorage hooks to preserve player state across reloads
+    function getTASDiagnostics() {
+        const state = window.__tasDiagnostics;
+        if (!state) return null;
+        return {
+            schemaVersion: 1, evidence: 'local diagnostic events; not proof of live playback',
+            script: state.script, version: state.version,
+            elapsedMs: Math.max(0, Date.now() - state.startedAt),
+            current: { ...state.current }, events: state.events.map(event => ({ ...event }))
+        };
+    }
+    function recordTASDiagnostic(data) {
+        if (typeof window === 'undefined' || !window.__tasDiagnostics) return;
+        const state = window.__tasDiagnostics;
+        const allowedEvents = ['backup-attempt', 'backup-selected', 'ad-start', 'ad-end', 'reload-request', 'pause-play', 'worker-error'];
+        if (!allowedEvents.includes(data.event)) return;
+        const entry = { atMs: Math.max(0, Date.now() - state.startedAt), event: data.event };
+        if (data.playerType !== undefined) {
+            entry.playerType = ['popout', 'embed', 'site', 'mobile_web', 'autoplay'].includes(data.playerType) ? data.playerType : 'unknown';
+        }
+        if (data.quality !== undefined) entry.quality = /^\d{1,5}x\d{1,5}$/.test(data.quality) ? data.quality : 'unknown';
+        if (Number.isFinite(data.durationMs)) entry.durationMs = Math.min(60000, Math.max(0, data.durationMs));
+        if (data.event === 'reload-request') {
+            entry.reason = ['early', 'worker-error', 'normal'].includes(data.reason) ? data.reason : 'normal';
+            state.current.recovery = entry.reason;
+        }
+        if (data.event === 'backup-selected') {
+            state.current.backup = entry.playerType || 'unknown';
+            state.current.quality = entry.quality || 'unknown';
+        }
+        if (data.event === 'ad-start' || data.event === 'ad-end') {
+            state.current.inAdBreak = data.event === 'ad-start';
+            state.current.backup = 'none';
+            state.current.quality = 'unknown';
+        }
+        state.events.push(entry);
+        if (state.events.length > 100) state.events.shift();
+        state.render();
+    }
+    function initializeTASControls(script, version) {
+        if (window.__tasDiagnostics || !document.body) return;
+        const state = window.__tasDiagnostics = { script, version, startedAt: Date.now(), events: [],
+            current: { backup: 'none', quality: 'unknown', recovery: 'none', inAdBreak: false }, render() {} };
+        const host = document.createElement('div');
+        host.id = 'tas-controls';
+        host.style.cssText = 'position:fixed;right:12px;bottom:12px;z-index:2147483646';
+        const root = host.attachShadow({ mode: 'open' });
+        const style = document.createElement('style');
+        style.textContent = `
+            :host { font: 14px/1.5 system-ui, sans-serif; color: #eee; }
+            button, input, select { font: inherit; }
+            button { padding: 8px 12px; min-height: 36px; cursor: pointer; }
+            button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid #72bcff; outline-offset: 2px; }
+            dialog { color: #eee; background: #202024; border: 1px solid #777; border-radius: 8px; padding: 24px; width: min(460px, calc(100vw - 64px)); max-height: calc(100dvh - 64px); overflow: auto; }
+            dialog::backdrop { background: rgb(0 0 0 / 65%); }
+            h2 { margin: 0 0 12px; font-size: 20px; }
+            label { display: block; margin-top: 12px; }
+            label.toggle { display: flex; align-items: center; gap: 8px; min-height: 32px; }
+            input[type=checkbox] { width: 18px; height: 18px; flex: none; }
+            summary { cursor: pointer; padding: 12px 0; }
+            input:not([type=checkbox]), select { display: block; box-sizing: border-box; width: 100%; padding: 6px; }
+            small { display: block; color: #ccc; }
+            .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+            #details { background: #202024; padding: 8px; max-width: 320px; margin-bottom: 8px; }
+            #feedback { min-height: 1.5em; }
+        `;
+        root.appendChild(style);
+        const create = (tag, parent, text) => {
+            const node = document.createElement(tag);
+            if (text) node.textContent = text;
+            parent.appendChild(node);
+            return node;
+        };
+        const details = create('div', root);
+        details.id = 'details';
+        details.hidden = true;
+        const trigger = create('button', root, 'Ad blocker settings');
+        trigger.type = 'button';
+        const dialog = create('dialog', root);
+        dialog.setAttribute('aria-labelledby', 'tas-title');
+        create('h2', dialog, 'Ad blocker settings').id = 'tas-title';
+        create('p', dialog, script + ' ' + version + '. Changes apply after reloading Twitch.');
+        const form = create('form', dialog);
+        const definitions = [
+            ['playerType', 'Token player type', 'popout', ['popout', 'embed', 'site', 'mobile_web', 'autoplay'], 'Autoplay may limit quality to 360p.'],
+            ['reloadPlayerAfterAd', 'Prefer a reload after ads', true, 'boolean', 'Required recovery resets can still run when disabled.'],
+            ['pinBackupPlayerType', 'Prefer the last working backup', script === 'vaft', 'boolean'],
+            ['hideAdOverlay', 'Hide the blocking-ads banner', false, 'boolean'],
+            ['showDiagnostics', 'Show backup and recovery status', false, 'boolean'],
+            ['reloadCooldownSeconds', 'Reload cooldown in seconds', 30, [0, 3600, 1], '0 disables the cooldown.'],
+            ['earlyReloadPollThreshold', 'Early reload poll threshold', 3, [0, 100, 1], '0 disables early reloads. A thin recovery cache can trigger sooner.']
+        ];
+        if (script === 'vaft') definitions.push(
+            ['driftCorrectionRate', 'Catch-up playback speed', 1.1, [0, 2, 0.05], '0 disables catch-up.'],
+            ['preferLowQualityBackup', 'Allow low-quality backup recovery', true, 'boolean'],
+            ['backupSwapFirst', 'Try backup streams before stripping', true, 'boolean'],
+            ['fastAutoplayFirstTry', 'Reuse a successful autoplay fallback', true, 'boolean'],
+            ['recoverFromSilentMute', 'Recover from silent player muting', true, 'boolean'],
+            ['disableAdSpoofing', 'Disable ad-completion spoofing', true, 'boolean'],
+            ['disablePostBreakWedge', 'Disable post-break video recovery', false, 'boolean'],
+            ['disableReloadCap', 'Allow unlimited recovery reloads', false, 'boolean'],
+            ['iosSoftReload', 'Preserve the player on Apple touch devices', true, 'boolean']
+        );
+        let advanced;
+        const fields = definitions.map(([key, title, fallback, type, hint], index) => {
+            if (index === 7) {
+                advanced = create('details', form);
+                create('summary', advanced, 'Advanced recovery settings');
+            }
+            const parent = advanced || form;
+            const id = 'tas-' + key;
+            const label = create('label', parent, title);
+            label.htmlFor = id;
+            const input = create(Array.isArray(type) && typeof type[0] === 'string' ? 'select' : 'input', parent);
+            input.id = id;
+            if (type === 'boolean') { input.type = 'checkbox'; label.className = 'toggle'; label.prepend(input); }
+            else if (input.tagName === 'SELECT') {
+                for (const value of type) { const option = create('option', input, value); option.value = value; }
+            } else {
+                input.type = 'number'; input.min = type[0]; input.max = type[1]; input.step = type[2]; input.required = true;
+            }
+            if (hint) {
+                const help = create('small', parent, hint);
+                help.id = id + '-hint'; input.setAttribute('aria-describedby', help.id);
+            }
+            return { key, fallback, type, input };
+        });
+        const feedback = create('p', form);
+        feedback.id = 'feedback'; feedback.setAttribute('role', 'status');
+        const actions = create('div', form); actions.className = 'actions';
+        const save = create('button', actions, 'Save settings'); save.type = 'submit';
+        const reset = create('button', actions, 'Reset these settings'); reset.type = 'button';
+        const download = create('button', actions, 'Export diagnostics'); download.type = 'button';
+        const close = create('button', actions, 'Close'); close.type = 'button';
+        const storageKey = key => 'twitchAdSolutions_' + key;
+        const populate = defaults => {
+            for (const field of fields) {
+                const stored = defaults ? null : localStorage.getItem(storageKey(field.key));
+                const value = stored ?? field.fallback;
+                if (field.type === 'boolean') field.input.checked = String(value) === 'true';
+                else field.input.value = value;
+            }
+        };
+        state.render = () => {
+            details.textContent = 'Backup: ' + state.current.backup + ' | Quality: ' + state.current.quality
+                + ' | Last recovery request: ' + state.current.recovery;
+        };
+        const show = () => {
+            feedback.textContent = '';
+            try { populate(false); } catch { feedback.textContent = 'Browser storage is unavailable. Settings cannot be saved.'; }
+            dialog.showModal();
+        };
+        trigger.addEventListener('click', show);
+        close.addEventListener('click', () => dialog.close());
+        dialog.addEventListener('close', () => trigger.focus());
+        const persist = defaults => {
+            const snapshot = new Map();
+            try {
+                for (const field of fields) snapshot.set(storageKey(field.key), localStorage.getItem(storageKey(field.key)));
+                for (const field of fields) {
+                    const key = storageKey(field.key);
+                    if (defaults) localStorage.removeItem(key);
+                    else localStorage.setItem(key, field.type === 'boolean' ? String(field.input.checked) : field.input.value);
+                }
+                details.hidden = localStorage.getItem(storageKey('showDiagnostics')) !== 'true';
+                if (defaults) populate(true);
+                feedback.textContent = 'Settings ' + (defaults ? 'reset' : 'saved') + '. Reload Twitch to apply playback changes.';
+            } catch {
+                for (const [key, value] of snapshot) {
+                    try { if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, value); } catch { /* Storage can remain unavailable. */ }
+                }
+                feedback.textContent = 'Could not save settings. Browser storage is unavailable.';
+            }
+        };
+        form.addEventListener('submit', event => {
+            event.preventDefault();
+            if (form.reportValidity()) persist(false);
+        });
+        reset.addEventListener('click', () => persist(true));
+        download.addEventListener('click', () => {
+            const report = getTASDiagnostics();
+            const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2) + '\n'], { type: 'application/json' }));
+            const link = create('a', root);
+            link.href = url; link.download = 'twitch-ad-solutions-diagnostics.json'; link.click(); link.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        });
+        document.body.appendChild(host);
+        try { details.hidden = localStorage.getItem(storageKey('showDiagnostics')) !== 'true'; } catch { /* Settings remain accessible without storage. */ }
+        state.render();
+        window.twitchAdSolutionsTools = { openSettings: show, diagnostics: getTASDiagnostics };
+    }
     function onContentLoaded() {
+        initializeTASControls('vaft', '68.5.31');
         if (document.getElementById('seventv-extension')) {
             console.log('[AD DEBUG] Warning: 7TV extension detected — may cause black screen or buffering issues. If you experience problems, try disabling 7TV.');
         }

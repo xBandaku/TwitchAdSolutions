@@ -20,8 +20,8 @@ twitch-brave-fix.js text/javascript
         if (_clipHost === 'clips.twitch.tv' || /^\/[^/]+\/clip\/[^/]+/.test(_clipPath)) return;
     }
     'use strict';
-    const ourVersion = 8;
-    console.log('[TwitchBraveFix-uBO] v1.3.4 loading');
+    const ourVersion = 9;
+    console.log('[TwitchBraveFix-uBO] v1.3.5 loading');
     // The userscript can add its retry transport after this diagnostic helper loads.
     if (typeof window.twitchBraveFixVersion !== 'undefined' && window.twitchBraveFixVersion >= ourVersion) {
         console.log('[TwitchBraveFix-uBO] CONFLICT: skipped — another instance already active (v' + window.twitchBraveFixVersion + ')');

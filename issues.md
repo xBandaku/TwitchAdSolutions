@@ -13,11 +13,11 @@ If you're using Chrome with a Manifest V3 based userscript manager (e.g. Tamperm
 
 ## Streams sometimes appear offline when ads occur
 
-This needs to be fixed but currently the exact cause is unknown. https://github.com/pixeltris/TwitchAdSolutions/issues/477
+This needs to be fixed but currently the exact cause is unknown. [Open a bug report in this fork](https://github.com/xBandaku/TwitchAdSolutions/issues/new?template=bug_report.yml)
 
 ## The player shows a loading wheel for a long time
 
-If it says `Blocking ads (stripping)` in the top left of the stream then it's actively removing the ad segments but doesn't have a backup stream to show you. If it doesn't say `Blocking ads (stripping)` provide additional information in https://github.com/pixeltris/TwitchAdSolutions/issues/474
+If it says `Blocking ads (stripping)` in the top left of the stream then it's actively removing the ad segments but doesn't have a backup stream to show you. If it doesn't say `Blocking ads (stripping)` provide additional information in [a bug report in this fork](https://github.com/xBandaku/TwitchAdSolutions/issues/new?template=bug_report.yml)
 
 ## The script don't work on mobile (m.twitch.tv)
 
