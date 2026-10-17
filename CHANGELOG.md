@@ -1,3 +1,12 @@
+## v68.5.35 (2026-10-17)
+
+- Add an optional vaft full-page refresh fallback under Advanced recovery settings, disabled by default. After both player recovery attempts time out, require another 3 seconds without progress on the same video and route before refreshing.
+- Limit automatic page refreshes to once every 5 minutes per tab using a cooldown that survives document reloads. If tab storage is unavailable or its timestamp is invalid, do not refresh. Cancel for playback progress, user or player pause, seeking, ended video, navigation, video replacement, non-live content, Picture-in-Picture, a new recovery, or a disabled option.
+- Warn in settings that a full refresh may trigger another ad and interrupt chat. Record a bounded, sanitized page-refresh diagnostic event before navigation. Successful, cancelled, unavailable and exceptional recovery outcomes do not trigger this fallback.
+- Synthetic edge cases: verify both failures and the extra observation window, opt-in/reset behavior, cooldown persistence and expiry, and cancellation safeguards. Browser fixtures verify actual document navigation after exhausted recovery. No claim that a full refresh prevents another live Twitch freeze or ad.
+- Validation: two before/after regressions fail at ba8d34c for the expected reason and pass after the change. Local Windows lint, Node suites, seven-script packaging and four Python tests pass. Browser fixtures: 250 passed, 26 documented Windows WebKit media skips. Connected Chrome confirms the option is off by default and persists after saving on a local UI fixture.
+- Version: vaft 68.5.35 (internal 120). Other script versions are unchanged.
+
 ## v68.5.34 (2026-10-17)
 
 - Start vaft's ad and post-ad freeze recovery after 3 seconds without playhead progress when readiness is low and no more than 0.1 seconds is buffered at the current position. Keep the 8-second threshold for usable buffered media, existing switch/reload grace periods, pause and seek safeguards, and bounded retries. This reduces detection time; token fetch and player startup still add recovery time.

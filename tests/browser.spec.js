@@ -239,6 +239,42 @@ test.afterEach(async ({ page }, testInfo) => {
 
 for (const script of scripts) {
     if (script.file.startsWith('vaft/vaft')) {
+        test('synthetic resilience: ' + script.file + ' exposes a disabled page-refresh option with reset support', async ({ page, context }) => {
+            await boot(page, context, script.file);
+            await page.getByRole('button', { name: 'Ad blocker settings', exact: true }).click();
+            const dialog = page.getByRole('dialog');
+            await dialog.getByText('Advanced recovery settings', { exact: true }).click();
+            const fallback = dialog.getByLabel('Refresh the page if player recovery fails', { exact: true });
+            await expect(fallback).not.toBeChecked();
+            await fallback.check();
+            await dialog.getByRole('button', { name: 'Save settings', exact: true }).click();
+            expect(await page.evaluate(() => localStorage.getItem('twitchAdSolutions_pageRefreshFallback'))).toBe('true');
+            await dialog.getByRole('button', { name: 'Reset these settings', exact: true }).click();
+            await expect(fallback).not.toBeChecked();
+            expect(await page.evaluate(() => localStorage.getItem('twitchAdSolutions_pageRefreshFallback'))).toBeNull();
+        });
+
+        test('synthetic resilience: ' + script.file + ' reloads the document only after opt-in recovery exhaustion', async ({ page, context }) => {
+            await bootRecovery(page, context, script.file);
+            let navigations = 0;
+            page.on('framenavigated', frame => { if (frame === page.mainFrame()) navigations++; });
+            await page.evaluate(() => {
+                localStorage.setItem('twitchAdSolutions_pageRefreshFallback', 'true');
+                window.__recoveryFixture.retainVideo = true;
+                window.__recoveryFixture.current.video.playbackRate = 0;
+                Object.defineProperty(window.__recoveryFixture.current.video, 'readyState', { configurable: true, value: 1 });
+                Object.defineProperty(window.__recoveryFixture.current.video, 'buffered', { configurable: true, value: { length: 0 } });
+            });
+            await page.evaluate(() => window.__recoveryFixture.reload('early'));
+            await page.clock.runFor(13000);
+            expect(await page.evaluate(() => window.__recoveryFixture.reloads.length)).toBe(2);
+            expect(navigations).toBe(0);
+            await page.clock.runFor(2500);
+            await expect.poll(() => navigations).toBe(1);
+            await expect.poll(() => page.evaluate(() => Number(sessionStorage.getItem('twitchAdSolutions_lastPageRefreshAt')))).toBeGreaterThan(0);
+            await expect(page.getByRole('button', { name: 'Ad blocker settings', exact: true })).toBeVisible();
+        });
+
         test('synthetic resilience: ' + script.file + ' resets a native paused video with a playing wrapper', async ({ page, context }) => {
             await bootRecovery(page, context, script.file);
             await page.clock.runFor(600);

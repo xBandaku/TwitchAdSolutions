@@ -29,8 +29,8 @@ function harness(file, bindings = {}) {
 
 function recoveryHarness(file) {
     let now = 100000, timerId = 0;
-    const timers = new Map(), storage = new Map(), reloads = [], listeners = new Map();
-    const window = { location: { href: 'https://www.twitch.tv/fixture' } };
+    const timers = new Map(), storage = new Map(), session = new Map(), pageRefreshes = [], reloads = [], listeners = new Map();
+    const window = { location: { href: 'https://www.twitch.tv/fixture', reload: () => pageRefreshes.push(now) } };
     const { context } = harness(file, {
         window, Date: class extends Date { static now() { return now; } },
         setTimeout(callback, delay) { timers.set(++timerId, { callback, at: now + delay }); return timerId; },
@@ -41,6 +41,7 @@ function recoveryHarness(file) {
             addEventListener(name, listener) { listeners.set(name, listener); },
             removeEventListener(name) { listeners.delete(name); }
         },
+        sessionStorage: { getItem: key => session.get(key) ?? null, setItem: (key, value) => session.set(key, value) },
         playerBufferState: { userPauseIntent: false }, localStorageHookFailed: false,
         iosSoftReload: false, playerForMonitoringBuffering: null
     });
@@ -64,7 +65,7 @@ function recoveryHarness(file) {
         }
         now = until;
     }
-    return { context, current, makePlayer, advance, storage, reloads, window, listeners };
+    return { context, current, makePlayer, advance, storage, session, pageRefreshes, reloads, window, listeners };
 }
 
 function monitorHarness(file, hasPlayed = true) {
@@ -100,6 +101,87 @@ function monitorHarness(file, hasPlayed = true) {
 }
 
 for (const file of files) {
+    test('synthetic resilience: ' + file + ' opt-in page fallback waits for both failures and another stalled window', () => {
+        const h = recoveryHarness(file);
+        h.storage.set('twitchAdSolutions_pageRefreshFallback', 'true');
+        h.context.doTwitchPlayerTask(false, true, 'early');
+        h.advance(6000);
+        assert.equal(h.reloads.length, 2);
+        assert.equal(h.pageRefreshes.length, 0);
+        h.advance(8999);
+        assert.equal(h.pageRefreshes.length, 0);
+        h.advance(1);
+        assert.equal(h.pageRefreshes.length, 1, 'page fallback did not refresh after exhausted recovery');
+        assert.equal(h.session.get('twitchAdSolutions_lastPageRefreshAt'), '115000');
+    });
+
+    for (const outcome of ['progress', 'exception']) {
+        test('synthetic resilience: ' + file + ' page fallback excludes recovery outcome ' + outcome, () => {
+            const h = recoveryHarness(file);
+            h.storage.set('twitchAdSolutions_pageRefreshFallback', 'true');
+            if (outcome === 'exception') h.current.state.setSrc = () => { throw new Error('fixture failure'); };
+            h.context.doTwitchPlayerTask(false, true, 'early');
+            h.advance(300);
+            if (outcome === 'progress') h.current.player.video.currentTime++;
+            h.advance(20000);
+            assert.equal(h.pageRefreshes.length, 0);
+        });
+    }
+
+    test('synthetic resilience: ' + file + ' page fallback is disabled by default', () => {
+        const h = recoveryHarness(file);
+        h.context.doTwitchPlayerTask(false, true, 'early');
+        h.advance(20000);
+        assert.equal(h.pageRefreshes.length, 0);
+        assert.equal(h.session.size, 0);
+    });
+
+    test('synthetic resilience: ' + file + ' page fallback cooldown survives a new document and expires after five minutes', () => {
+        const h = recoveryHarness(file);
+        h.storage.set('twitchAdSolutions_pageRefreshFallback', 'true');
+        h.session.set('twitchAdSolutions_lastPageRefreshAt', '90000');
+        h.context.doTwitchPlayerTask(false, true, 'early');
+        h.advance(16000);
+        assert.equal(h.pageRefreshes.length, 0);
+        assert.equal(h.session.get('twitchAdSolutions_lastPageRefreshAt'), '90000');
+        h.advance(300000);
+        h.context.doTwitchPlayerTask(false, true, 'early');
+        h.advance(16000);
+        assert.equal(h.pageRefreshes.length, 1);
+        const nextDocument = recoveryHarness(file);
+        nextDocument.storage.set('twitchAdSolutions_pageRefreshFallback', 'true');
+        nextDocument.session.set('twitchAdSolutions_lastPageRefreshAt', h.session.get('twitchAdSolutions_lastPageRefreshAt'));
+        nextDocument.advance(Number(h.session.get('twitchAdSolutions_lastPageRefreshAt')) - 100000 + 1000);
+        nextDocument.context.doTwitchPlayerTask(false, true, 'early');
+        nextDocument.advance(16000);
+        assert.equal(nextDocument.pageRefreshes.length, 0, 'new document bypassed the persisted cooldown');
+    });
+
+    for (const guard of ['progress', 'user-pause', 'paused', 'seek', 'ended', 'pip', 'navigation', 'replacement', 'disabled', 'vod', 'storage', 'malformed', 'new-recovery']) {
+        test('synthetic resilience: ' + file + ' page fallback cancels for ' + guard, () => {
+            const h = recoveryHarness(file);
+            h.storage.set('twitchAdSolutions_pageRefreshFallback', 'true');
+            h.context.doTwitchPlayerTask(false, true, 'early');
+            h.advance(12500);
+            if (guard === 'progress') h.current.player.video.currentTime++;
+            if (guard === 'user-pause') h.context.playerBufferState.userPauseIntent = true;
+            if (guard === 'paused') h.current.player.isPaused = () => true;
+            if (guard === 'seek') h.current.player.video.seeking = true;
+            if (guard === 'ended') h.current.player.video.ended = true;
+            if (guard === 'pip') h.context.document.pictureInPictureElement = h.current.player.video;
+            if (guard === 'navigation') h.window.location.href += '/other';
+            if (guard === 'replacement') h.current.player = h.makePlayer();
+            if (guard === 'disabled') h.storage.set('twitchAdSolutions_pageRefreshFallback', 'false');
+            if (guard === 'vod') h.current.state.props.content.type = 'vod';
+            if (guard === 'storage') h.context.sessionStorage.setItem = () => { throw new Error('denied'); };
+            if (guard === 'malformed') h.session.set('twitchAdSolutions_lastPageRefreshAt', 'bad');
+            if (guard === 'new-recovery') h.context.doTwitchPlayerTask(false, true, 'early');
+            h.advance(3000);
+            assert.equal(h.pageRefreshes.length, 0);
+            h.context.doTwitchPlayerTask.recovery?.cancel();
+        });
+    }
+
     for (const layout of ['empty', 'edge', 'gap']) {
         test('synthetic resilience: ' + file + ' fast depleted-buffer recovery for ' + layout, () => {
             const h = monitorHarness(file);
