@@ -288,7 +288,7 @@ for (const script of scripts) {
             expect(await page.evaluate(() => window.twitchAdSolutionsTools.diagnostics().playback)).toMatchObject({
                 readyState: 1, inAdBreak: false, recoveryActive: false, buffered: []
             });
-            await page.clock.runFor(17400);
+            await page.clock.runFor(12400);
             expect(await page.evaluate(() => window.__recoveryFixture.reloads.length)).toBe(0);
             await page.clock.runFor(1800);
             expect(await page.evaluate(() => window.__recoveryFixture.reloads)).toEqual([
@@ -808,6 +808,37 @@ test('synthetic resilience: Brave userscript bounds a silent manager request', a
 });
 
 for (const file of scripts.filter(script => /^(vaft\/vaft|video-swap-new\/)/.test(script.file)).map(script => script.file)) {
+    test('synthetic resilience: settings button moves, hides and reopens with the keyboard in ' + file, async ({ page, context }) => {
+        await boot(page, context, file);
+        const trigger = page.getByRole('button', { name: 'Ad blocker settings', exact: true });
+        const dialog = page.getByRole('dialog', { name: 'Ad blocker settings' });
+        await trigger.click();
+        await dialog.getByLabel('Settings button position').selectOption('top-left');
+        await dialog.getByRole('button', { name: 'Save settings' }).click();
+        await page.keyboard.press('Escape');
+        await expect(trigger).toBeFocused();
+        await expect(page.locator('#tas-controls')).toHaveCSS('left', '12px');
+        await expect(page.locator('#tas-controls')).toHaveCSS('top', '12px');
+        await page.reload();
+        await expect(page.locator('#tas-controls')).toHaveCSS('left', '12px');
+        await expect(page.locator('#tas-controls')).toHaveCSS('top', '12px');
+        await trigger.click();
+        await dialog.getByLabel('Hide settings button', { exact: true }).check();
+        await dialog.getByRole('button', { name: 'Save settings' }).click();
+        await page.keyboard.press('Escape');
+        await expect(trigger).toBeHidden();
+        await page.reload();
+        await expect(trigger).toBeHidden();
+        await page.keyboard.press('Alt+Shift+A');
+        await expect(dialog).toBeVisible();
+        await dialog.getByRole('button', { name: 'Reset these settings' }).click();
+        await page.keyboard.press('Escape');
+        await expect(trigger).toBeVisible();
+        await expect(trigger).toBeFocused();
+        await expect(page.locator('#tas-controls')).toHaveCSS('right', '12px');
+        await expect(page.locator('#tas-controls')).toHaveCSS('bottom', '12px');
+    });
+
     test('synthetic resilience: settings validate, reset, export and restore keyboard focus in ' + file, async ({ page, context }) => {
         await boot(page, context, file);
         const trigger = page.getByRole('button', { name: 'Ad blocker settings', exact: true });

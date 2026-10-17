@@ -37,7 +37,7 @@ twitch-videoad.js text/javascript
         }
     }
     'use strict';
-    const ourTwitchAdSolutionsVersion = 118;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 119;// Used to prevent conflicts with outdated versions of the scripts
     console.log('[AD DEBUG] TwitchAdSolutions vaft v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
         console.log('[AD DEBUG] CONFLICT: vaft v' + ourTwitchAdSolutionsVersion + ' skipped — another script already active (v' + window.twitchAdSolutionsVersion + '). Remove duplicate scripts.');
@@ -2466,13 +2466,24 @@ twitch-videoad.js text/javascript
                     watch.stalledAt = 0;
                 } else if (!watch.reloadUsed) {
                     if (!watch.stalledAt) watch.stalledAt = now;
-                    else if (now - watch.stalledAt >= 8000) {
-                        console.log('[AD DEBUG] ' + (postBreakWatch ? 'Post-ad' : 'Ad backup') + ' playhead frozen for ' + ((now - watch.stalledAt) / 1000).toFixed(1)
-                            + 's (readyState=' + video.readyState + ', networkState=' + video.networkState
-                            + ', bufferedRanges=' + video.buffered.length + ', stripping=' + isActivelyStrippingAds + ') - hard reload');
-                        watch.reloadUsed = true;
-                        watch.stalledAt = 0;
-                        doTwitchPlayerTask(false, true, 'early');
+                    else {
+                        // Fast recovery only when the current position has no usable buffered future.
+                        let bufferedAhead = 0;
+                        for (let i = 0; i < video.buffered.length; i++) {
+                            if (video.buffered.start(i) <= video.currentTime && video.buffered.end(i) > video.currentTime) {
+                                bufferedAhead = video.buffered.end(i) - video.currentTime;
+                                break;
+                            }
+                        }
+                        const stallThreshold = video.readyState <= 2 && bufferedAhead <= 0.1 ? 3000 : 8000;
+                        if (now - watch.stalledAt >= stallThreshold) {
+                            console.log('[AD DEBUG] ' + (postBreakWatch ? 'Post-ad' : 'Ad backup') + ' playhead frozen for ' + ((now - watch.stalledAt) / 1000).toFixed(1)
+                                + 's (readyState=' + video.readyState + ', networkState=' + video.networkState
+                                + ', bufferedRanges=' + video.buffered.length + ', stripping=' + isActivelyStrippingAds + ') - hard reload');
+                            watch.reloadUsed = true;
+                            watch.stalledAt = 0;
+                            doTwitchPlayerTask(false, true, 'early');
+                        }
                     }
                 }
                 watch.position = video.currentTime;
@@ -3283,6 +3294,8 @@ twitch-videoad.js text/javascript
         details.hidden = true;
         const trigger = create('button', root, 'Ad blocker settings');
         trigger.type = 'button';
+        trigger.setAttribute('aria-keyshortcuts', 'Alt+Shift+A');
+        trigger.title = 'Open settings (Alt+Shift+A)';
         const dialog = create('dialog', root);
         dialog.setAttribute('aria-labelledby', 'tas-title');
         create('h2', dialog, 'Ad blocker settings').id = 'tas-title';
@@ -3294,6 +3307,8 @@ twitch-videoad.js text/javascript
             ['pinBackupPlayerType', 'Prefer the last working backup', script === 'vaft', 'boolean'],
             ['hideAdOverlay', 'Hide the blocking-ads banner', false, 'boolean'],
             ['showDiagnostics', 'Show backup and recovery status', false, 'boolean'],
+            ['settingsButtonPosition', 'Settings button position', 'bottom-right', ['bottom-right', 'bottom-left', 'top-right', 'top-left']],
+            ['hideSettingsButton', 'Hide settings button', false, 'boolean', 'Press Alt+Shift+A to reopen settings, including when the button is hidden.'],
             ['reloadCooldownSeconds', 'Reload cooldown in seconds', 30, [0, 3600, 1], '0 disables the cooldown.'],
             ['earlyReloadPollThreshold', 'Early reload poll threshold', 3, [0, 100, 1], '0 disables early reloads. A thin recovery cache can trigger sooner.']
         ];
@@ -3310,7 +3325,7 @@ twitch-videoad.js text/javascript
         );
         let advanced;
         const fields = definitions.map(([key, title, fallback, type, hint], index) => {
-            if (index === 7) {
+            if (index === 9) {
                 advanced = create('details', form);
                 create('summary', advanced, 'Advanced recovery settings');
             }
@@ -3353,14 +3368,39 @@ twitch-videoad.js text/javascript
                 + ' | Last recovery request: ' + state.current.recovery
                 + (state.current.recoveryOutcome ? ' (' + state.current.recoveryOutcome + ')' : '');
         };
+        let previousFocus;
         const show = () => {
+            if (dialog.open) return;
+            previousFocus = document.activeElement;
             feedback.textContent = '';
             try { populate(false); } catch { feedback.textContent = 'Browser storage is unavailable. Settings cannot be saved.'; }
             dialog.showModal();
         };
         trigger.addEventListener('click', show);
         close.addEventListener('click', () => dialog.close());
-        dialog.addEventListener('close', () => trigger.focus());
+        dialog.addEventListener('close', () => {
+            if (!trigger.hidden) trigger.focus();
+            else if (previousFocus?.isConnected && previousFocus !== host) previousFocus.focus();
+        });
+        document.addEventListener('keydown', event => {
+            const target = event.composedPath()[0];
+            if (event.repeat || event.isComposing || target?.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target?.tagName)) return;
+            if (event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && event.code === 'KeyA') {
+                event.preventDefault();
+                show();
+            }
+        });
+        const applyPresentation = () => {
+            const position = localStorage.getItem(storageKey('settingsButtonPosition'));
+            const left = position === 'bottom-left' || position === 'top-left';
+            const top = position === 'top-left' || position === 'top-right';
+            host.style.left = left ? '12px' : 'auto';
+            host.style.right = left ? 'auto' : '12px';
+            host.style.top = top ? '12px' : 'auto';
+            host.style.bottom = top ? 'auto' : '12px';
+            trigger.hidden = localStorage.getItem(storageKey('hideSettingsButton')) === 'true';
+            details.hidden = localStorage.getItem(storageKey('showDiagnostics')) !== 'true';
+        };
         const persist = defaults => {
             const snapshot = new Map();
             try {
@@ -3370,7 +3410,7 @@ twitch-videoad.js text/javascript
                     if (defaults) localStorage.removeItem(key);
                     else localStorage.setItem(key, field.type === 'boolean' ? String(field.input.checked) : field.input.value);
                 }
-                details.hidden = localStorage.getItem(storageKey('showDiagnostics')) !== 'true';
+                applyPresentation();
                 if (defaults) populate(true);
                 feedback.textContent = 'Settings ' + (defaults ? 'reset' : 'saved') + '. Reload Twitch to apply playback changes.';
             } catch {
@@ -3393,12 +3433,12 @@ twitch-videoad.js text/javascript
             setTimeout(() => URL.revokeObjectURL(url), 1000);
         });
         document.body.appendChild(host);
-        try { details.hidden = localStorage.getItem(storageKey('showDiagnostics')) !== 'true'; } catch { /* Settings remain accessible without storage. */ }
+        try { applyPresentation(); } catch { /* Settings remain accessible without storage. */ }
         state.render();
         window.twitchAdSolutionsTools = { openSettings: show, diagnostics: getTASDiagnostics };
     }
     function onContentLoaded() {
-        initializeTASControls('vaft', '68.5.33');
+        initializeTASControls('vaft', '68.5.34');
         if (document.getElementById('seventv-extension')) {
             console.log('[AD DEBUG] Warning: 7TV extension detected — may cause black screen or buffering issues. If you experience problems, try disabling 7TV.');
         }
