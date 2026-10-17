@@ -100,6 +100,63 @@ function monitorHarness(file, hasPlayed = true) {
 }
 
 for (const file of files) {
+    test('synthetic resilience: ' + file + ' starts a required reset despite stale paused internals', () => {
+        const h = recoveryHarness(file);
+        h.current.player.video.paused = true;
+        h.current.player.isPaused = () => false;
+        h.current.player.core.paused = true;
+        h.context.doTwitchPlayerTask(false, true, 'early');
+        assert.equal(h.reloads.length, 1, 'stale paused internals blocked the required reset');
+        h.context.doTwitchPlayerTask.recovery.cancel();
+    });
+
+    test('synthetic resilience: ' + file + ' recovers an involuntarily paused post-ad video', () => {
+        const h = monitorHarness(file);
+        h.context.playerBufferState.inAdBreak = true;
+        h.advance(600);
+        h.context.playerBufferState.inAdBreak = false;
+        Object.assign(h.current.player.video, { paused: true, readyState: 2, networkState: 2,
+            buffered: { length: 1, start: () => 0, end: () => h.current.player.video.currentTime + 0.001 } });
+        h.current.player.isPaused = () => false;
+        h.current.player.core.paused = true;
+        h.advance(9000);
+        assert.equal(h.reloads.length, 1, 'native pause mismatch suppressed the post-ad watchdog');
+        h.context.doTwitchPlayerTask.recovery.cancel();
+    });
+
+    test('synthetic resilience: ' + file + ' keeps retries bounded when play leaves the video paused', async () => {
+        const h = recoveryHarness(file);
+        h.context.doTwitchPlayerTask(false, true, 'early');
+        h.current.player.video.paused = true;
+        h.current.player.core.paused = true;
+        h.current.player.isPaused = () => false;
+        h.current.player.play = () => Promise.resolve();
+        h.advance(13000);
+        assert.equal(h.reloads.length, 2, 'paused internals cancelled recovery before its retry');
+        assert.equal(await h.context.doTwitchPlayerTask.latestRecovery.promise, false);
+    });
+
+    test('synthetic resilience: ' + file + ' preserves a wrapper-confirmed pause without an intent event', () => {
+        const h = recoveryHarness(file);
+        h.current.player.video.paused = true;
+        h.current.player.core.paused = true;
+        h.context.doTwitchPlayerTask(false, true, 'early');
+        assert.equal(h.reloads.length, 0);
+        assert.equal(h.current.player.plays, 0);
+    });
+
+    test('synthetic resilience: ' + file + ' required reset still respects explicit user pause', () => {
+        const h = recoveryHarness(file);
+        h.window.__tasDiagnostics = { startedAt: 100000, current: {}, events: [], render() {} };
+        h.context.playerBufferState.userPauseIntent = true;
+        h.current.player.core.paused = true;
+        h.context.doTwitchPlayerTask(false, true, 'early');
+        assert.equal(h.reloads.length, 0);
+        assert.equal(h.current.player.plays, 0);
+        assert.equal(h.window.__tasDiagnostics.events.at(-1).reason, 'user-pause');
+        assert.equal(h.window.__tasDiagnostics.current.recoveryOutcome, 'blocked-user-pause');
+    });
+
     for (const replacementAt of ['before-end', 'at-end', 'after-end']) {
         test('synthetic resilience: ' + file + ' preserves post-ad recovery across replacement ' + replacementAt, () => {
             const h = monitorHarness(file);

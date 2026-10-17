@@ -37,7 +37,7 @@ twitch-videoad.js text/javascript
         }
     }
     'use strict';
-    const ourTwitchAdSolutionsVersion = 117;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 118;// Used to prevent conflicts with outdated versions of the scripts
     console.log('[AD DEBUG] TwitchAdSolutions vaft v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
         console.log('[AD DEBUG] CONFLICT: vaft v' + ourTwitchAdSolutionsVersion + ' skipped — another script already active (v' + window.twitchAdSolutionsVersion + '). Remove duplicate scripts.');
@@ -2461,7 +2461,7 @@ twitch-videoad.js text/javascript
                     if (!recentReload && !doTwitchPlayerTask.recovery) watch.reloadUsed = false;
                 }
                 if (advanced || reset || !watch.hasPlayed || (!playerBufferState.inAdBreak && !postBreakWatch)
-                    || video.paused || video.ended || monitored.player.isPaused()
+                    || video.ended || monitored.player.isPaused()
                     || playerBufferState.userPauseIntent || recentReload || recentSwitch || doTwitchPlayerTask.recovery) {
                     watch.stalledAt = 0;
                 } else if (!watch.reloadUsed) {
@@ -2770,30 +2770,34 @@ twitch-videoad.js text/javascript
         const playerAndState = getPlayerAndState();
         if (!playerAndState) {
             console.log('Could not find react root');
+            recordTASDiagnostic({ event: 'recovery-blocked', reason: 'unavailable' });
             return;
         }
         const player = playerAndState.player;
         const playerState = playerAndState.state;
         if (!player) {
             console.log('Could not find player');
+            recordTASDiagnostic({ event: 'recovery-blocked', reason: 'unavailable' });
             return;
         }
         if (!playerState) {
             console.log('Could not find player state');
+            recordTASDiagnostic({ event: 'recovery-blocked', reason: 'unavailable' });
             return;
         }
-        if (playerState.props?.content?.type !== 'live' || playerBufferState.userPauseIntent) return;
-        const wasPaused = player.isPaused() || player.core?.paused;
-        if (wasPaused) {
-            if (playerBufferState.userPauseIntent) {
-                if (!playerBufferState.loggedPauseIntent) {
-                    playerBufferState.loggedPauseIntent = true;
-                    console.log('[AD DEBUG] Respecting user pause intent — skipping auto-resume');
-                }
-                return;
-            }
+        if (playerState.props?.content?.type !== 'live' || playerBufferState.userPauseIntent) {
+            recordTASDiagnostic({ event: 'recovery-blocked', reason: playerBufferState.userPauseIntent ? 'user-pause' : 'not-live' });
+            return;
+        }
+        const playerPaused = player.isPaused();
+        const wasPaused = playerPaused || player.core?.paused;
+        // Paused decoder internals can be the failure requiring a reset, not a user action.
+        const requiredReset = isReload && reloadKind === 'early' && !playerPaused && !document.pictureInPictureElement;
+        if (wasPaused && !requiredReset) {
             if (playerBufferState.weJustPaused && (Date.now() - playerBufferState.weJustPaused) < 10000) {
                 try { player.play()?.catch?.(() => {}); } catch {}
+            } else {
+                recordTASDiagnostic({ event: 'recovery-blocked', reason: 'paused' });
             }
             return;
         }
@@ -2937,7 +2941,7 @@ twitch-videoad.js text/javascript
                         observedVideo = video;
                         initialTime = video.currentTime;
                     }
-                    if (playedVideo === video && video.paused && current.player.core?.paused) { finish(false); return; }
+                    if (playedVideo === video && video.paused && current.player.core?.paused && current.player.isPaused()) { finish(false); return; }
                     if (playedVideo !== video) {
                         playedVideo = video;
                         try {
@@ -3178,6 +3182,7 @@ twitch-videoad.js text/javascript
                 networkState: finite(video.networkState), paused: video.paused === true, ended: video.ended === true,
                 seeking: video.seeking === true, buffered: ranges, decodedFrames: frames,
                 mediaErrorCode: finite(video.error?.code), playerPaused: current.player.isPaused?.() === true,
+                corePaused: !!current.player.core?.paused,
                 live: current.state?.props?.content?.type === 'live',
                 userPauseIntent: playerBufferState.userPauseIntent === true,
                 inAdBreak: playerBufferState.inAdBreak === true, stripping: isActivelyStrippingAds === true,
@@ -3199,11 +3204,15 @@ twitch-videoad.js text/javascript
     function recordTASDiagnostic(data) {
         if (typeof window === 'undefined' || !window.__tasDiagnostics) return;
         const state = window.__tasDiagnostics;
-        const allowedEvents = ['backup-attempt', 'backup-selected', 'ad-start', 'ad-end', 'reload-request', 'pause-play', 'worker-error', 'reload-start', 'recovery-finished'];
+        const allowedEvents = ['backup-attempt', 'backup-selected', 'ad-start', 'ad-end', 'reload-request', 'pause-play', 'worker-error', 'reload-start', 'recovery-finished', 'recovery-blocked'];
         if (!allowedEvents.includes(data.event)) return;
         if (data.event === 'backup-selected' && data.playerType === state.current.backup && data.quality === state.current.quality) return;
         if (data.event === 'reload-request' || data.event === 'reload-start') state.current.recoveryOutcome = null;
         const entry = { atMs: Math.max(0, Date.now() - state.startedAt), event: data.event };
+        if (data.event === 'recovery-blocked') {
+            entry.reason = ['unavailable', 'user-pause', 'not-live', 'paused'].includes(data.reason) ? data.reason : 'unavailable';
+            state.current.recoveryOutcome = 'blocked-' + entry.reason;
+        }
         if (data.event === 'reload-start' || data.event === 'recovery-finished') {
             entry.attempt = Number.isInteger(data.attempt) && data.attempt >= 0 && data.attempt <= 3 ? data.attempt : 0;
             if (data.event === 'reload-start') entry.hardReload = data.hardReload === true;
@@ -3389,7 +3398,7 @@ twitch-videoad.js text/javascript
         window.twitchAdSolutionsTools = { openSettings: show, diagnostics: getTASDiagnostics };
     }
     function onContentLoaded() {
-        initializeTASControls('vaft', '68.5.32');
+        initializeTASControls('vaft', '68.5.33');
         if (document.getElementById('seventv-extension')) {
             console.log('[AD DEBUG] Warning: 7TV extension detected — may cause black screen or buffering issues. If you experience problems, try disabling 7TV.');
         }

@@ -239,6 +239,37 @@ test.afterEach(async ({ page }, testInfo) => {
 
 for (const script of scripts) {
     if (script.file.startsWith('vaft/vaft')) {
+        test('synthetic resilience: ' + script.file + ' resets a native paused video with a playing wrapper', async ({ page, context }) => {
+            await bootRecovery(page, context, script.file);
+            await page.clock.runFor(600);
+            const baseline = await page.evaluate(() => window.__recoveryFixture.current.video.currentTime);
+            await expect.poll(() => page.evaluate(() => window.__recoveryFixture.current.video.currentTime)).toBeGreaterThan(baseline + 0.2);
+            await page.clock.runFor(600);
+            await page.evaluate(async () => {
+                const fixture = window.__recoveryFixture;
+                await fixture.adBreak();
+                fixture.current.video.playbackRate = 0;
+                Object.defineProperty(fixture.current.video, 'paused', { configurable: true, value: true });
+                fixture.current.isPaused = () => false;
+                fixture.current.core.paused = true;
+            });
+            await page.clock.runFor(600);
+            await page.evaluate(() => window.__recoveryFixture.endAdBreak());
+            expect(await page.evaluate(() => window.twitchAdSolutionsTools.diagnostics().playback)).toMatchObject({
+                paused: true, playerPaused: false, corePaused: true, userPauseIntent: false, recoveryActive: false
+            });
+            await page.clock.runFor(19200);
+            expect(await page.evaluate(() => window.__recoveryFixture.reloads)).toEqual([
+                { isNewMediaPlayerInstance: true, refreshAccessToken: true }
+            ]);
+            await expect.poll(() => page.evaluate(() => window.__recoveryFixture.current.video.readyState)).toBeGreaterThanOrEqual(2);
+            await page.evaluate(() => { window.__recoveryFixture.current.video.currentTime = 17; });
+            await page.clock.runFor(150);
+            await expect.poll(() => page.evaluate(() => window.__recoveryFixture.current.video.currentTime)).toBeGreaterThan(17.2);
+            await page.clock.runFor(300);
+            expect(await page.evaluate(() => window.twitchAdSolutionsTools.diagnostics().events.some(event => event.event === 'recovery-finished' && event.success))).toBe(true);
+        });
+
         test('synthetic resilience: ' + script.file + ' recovers a depleted native video after an ad ends', async ({ page, context }) => {
             await bootRecovery(page, context, script.file);
             await page.clock.runFor(600);
