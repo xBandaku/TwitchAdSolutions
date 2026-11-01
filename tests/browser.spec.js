@@ -961,4 +961,55 @@ for (const file of scripts.filter(script => /^(vaft\/vaft|video-swap-new\/)/.tes
         await expect(trigger).toBeFocused();
         await page.evaluate(() => window.__diagnosticWorker.terminate());
     });
+
+    test('synthetic resilience: playback timeline, shareable report and settings backup in ' + file, async ({ page, context }) => {
+        await boot(page, context, file);
+        const script = file.startsWith('vaft/') ? 'vaft' : 'video-swap-new';
+        const trigger = page.getByRole('button', { name: 'Ad blocker settings', exact: true });
+        await trigger.click();
+        const dialog = page.getByRole('dialog', { name: 'Ad blocker settings' });
+        await dialog.getByLabel('Reload cooldown in seconds').fill('45');
+        await dialog.getByRole('button', { name: 'Save settings' }).click();
+        await page.evaluate(() => {
+            const source = `self.postMessage({key:'TASDiagnostic',event:'backup-selected',playerType:'autoplay',quality:'640x360',durationMs:120,authorization:'OAuth private',url:'https://private.invalid/token'});`;
+            window.__diagnosticWorker = new Worker(URL.createObjectURL(new Blob([source], { type: 'text/javascript' })));
+        });
+        const timeline = dialog.locator('#timeline');
+        await timeline.locator('summary').click();
+        await expect(timeline.locator('#event-list')).toContainText('Backup selected: autoplay / 640x360');
+
+        await dialog.getByRole('button', { name: 'Generate bug report' }).click();
+        const reportText = await dialog.locator('#bug-report').inputValue();
+        expect(reportText).toContain('TwitchAdSolutions bug report');
+        expect(reportText).toContain('local diagnostic events; not proof of live playback');
+        expect(reportText).toContain('Backup selected: autoplay / 640x360');
+        expect(reportText).not.toContain('private');
+
+        const pendingDownload = page.waitForEvent('download');
+        await dialog.getByRole('button', { name: 'Export settings' }).click();
+        const backupDownload = await pendingDownload;
+        expect(backupDownload.suggestedFilename()).toBe('twitch-ad-solutions-settings.json');
+        const backup = JSON.parse(fs.readFileSync(await backupDownload.path(), 'utf8'));
+        expect(backup).toMatchObject({ schemaVersion: 1, script, settings: { reloadCooldownSeconds: '45' } });
+
+        await dialog.getByLabel('Reload cooldown in seconds').fill('30');
+        await dialog.getByRole('button', { name: 'Save settings' }).click();
+        await dialog.locator('input[type=file]').setInputFiles(await backupDownload.path());
+        await expect(dialog.getByRole('status')).toContainText('Settings imported');
+        expect(await page.evaluate(() => localStorage.getItem('twitchAdSolutions_reloadCooldownSeconds'))).toBe('45');
+
+        await dialog.locator('input[type=file]').setInputFiles({
+            name: 'invalid-settings.json',
+            mimeType: 'application/json',
+            buffer: Buffer.from(JSON.stringify({ schemaVersion: 1, script, settings: {
+                reloadCooldownSeconds: '90', playerType: 'not-a-player'
+            } }))
+        });
+        await expect(dialog.getByRole('status')).toContainText('Invalid value for playerType');
+        expect(await page.evaluate(() => localStorage.getItem('twitchAdSolutions_reloadCooldownSeconds'))).toBe('45');
+        await page.evaluate(() => localStorage.setItem('twitchAdSolutions_playerType', 'not-a-player'));
+        await dialog.getByRole('button', { name: 'Export settings' }).click();
+        await expect(dialog.getByRole('status')).toContainText('A saved value is invalid');
+        await page.evaluate(() => window.__diagnosticWorker.terminate());
+    });
 }

@@ -1,3 +1,11 @@
+## Unreleased
+
+- Add a playback timeline in settings showing the newest 20 sanitized local events, distinguishing recovery requests from observed recovery outcomes.
+- Add a readable bug-report preview with a manual copy action. The report includes the script version, current playback snapshot and recent allowlisted event details; it is not sent automatically and reminds users to review it before sharing.
+- Add versioned settings backup export/import for vaft and video-swap-new. Imports are limited to the matching script, validate known settings before writing, roll back on storage errors, and reject files larger than 64 KiB. Invalid saved values prevent creation of an unusable backup.
+- Synthetic browser fixtures cover the timeline, report privacy, settings round-trip and invalid-import atomicity. No new live Twitch playback evidence is claimed.
+- Versions: vaft 68.5.38 (internal 123), video-swap-new 1.93 (internal 61).
+
 ## v68.5.37 (2026-11-01)
 
 - Preserve a recent trusted playback-control input when clearing older pause intent. A subsequent native pause can still be attributed to the user instead of being inferred as a Twitch/player pause.
