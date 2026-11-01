@@ -1,5 +1,9 @@
 # TwitchAdSolutions
 
+[![Version](https://img.shields.io/github/v/release/xBandaku/TwitchAdSolutions?display_name=tag&label=version)](https://github.com/xBandaku/TwitchAdSolutions/releases)
+[![Stars](https://img.shields.io/github/stars/xBandaku/TwitchAdSolutions?style=flat)](https://github.com/xBandaku/TwitchAdSolutions/stargazers)
+[![Downloads](https://img.shields.io/github/downloads/xBandaku/TwitchAdSolutions/total?label=downloads)](https://github.com/xBandaku/TwitchAdSolutions/releases)
+
 Twitch ad-blocking scripts for userscript managers and uBlock Origin. Start with `vaft`. Playback can pause or temporarily drop to 360p during ads.
 
 ## Install
