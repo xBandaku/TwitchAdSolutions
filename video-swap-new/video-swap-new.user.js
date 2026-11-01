@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TwitchAdSolutions (video-swap-new)
 // @namespace    https://github.com/ryanbr/TwitchAdSolutions
-// @version      1.93
+// @version      1.94
 // @updateURL    https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/diagnostics-settings-tools-test/video-swap-new/video-swap-new.user.js
 // @downloadURL  https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/diagnostics-settings-tools-test/video-swap-new/video-swap-new.user.js
 // @description  Multiple solutions for blocking Twitch ads (video-swap-new)
@@ -47,7 +47,8 @@
         }
     }
     'use strict';
-    const ourTwitchAdSolutionsVersion = 61;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 62;// Used to prevent conflicts with outdated versions of the scripts
+    const TAS_INSTALL_METHOD = 'userscript';
     console.log('[AD DEBUG] TwitchAdSolutions video-swap-new v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
         console.log('[AD DEBUG] CONFLICT: video-swap-new v' + ourTwitchAdSolutionsVersion + ' skipped — another script already active (v' + window.twitchAdSolutionsVersion + '). Remove duplicate scripts.');
@@ -1851,17 +1852,71 @@
                 atMs: event.atMs, event: event.event, playerType: event.playerType, quality: event.quality,
                 reason: event.reason, attempt: event.attempt, success: event.success, source: event.source
             }));
+            const scriptChoice = script + (TAS_INSTALL_METHOD === 'uBlock Origin' ? ' (uBlock Origin)' : ' (userscript)');
             reportText.value = [
-                'TwitchAdSolutions bug report',
-                'Script: ' + report.script + ' ' + report.version,
-                'Evidence: local diagnostic events; not proof of live playback.',
-                'Elapsed: ' + (report.elapsedMs / 1000).toFixed(1) + ' seconds',
-                'Current status: ' + JSON.stringify(report.current),
-                'Playback snapshot: ' + JSON.stringify(report.playback),
-                'Recent events (oldest first):',
-                ...(safeEvents.length ? safeEvents.map(formatEvent).reverse() : ['(none)']),
+                '### Before submitting, please check',
                 '',
-                'Review this report before sharing. It contains no channel name, playlist URL, token, or request header.'
+                '- [ ] I am using the latest version (not a permalink)',
+                '- [ ] I have restarted my browser / disabled and re-enabled uBlock Origin',
+                '- [ ] I have checked [Known Extension Conflicts](https://github.com/ryanbr/TwitchAdSolutions/blob/master/README.md#known-extension-conflicts)',
+                '',
+                '### Which script are you using?',
+                '',
+                scriptChoice,
+                '',
+                '### Script version',
+                '',
+                script + ' ' + report.version,
+                '',
+                '### Browser',
+                '',
+                'Please fill in (not collected by the script).',
+                '',
+                '### Install method',
+                '',
+                TAS_INSTALL_METHOD === 'userscript'
+                    ? 'Please fill in your userscript manager (not detected by the script).'
+                    : TAS_INSTALL_METHOD,
+                '',
+                '### What happened?',
+                '',
+                'Please describe what you saw and what you expected.',
+                '',
+                '**Local diagnostic summary** (local diagnostic events; not proof of live playback):',
+                '- Elapsed: ' + (report.elapsedMs / 1000).toFixed(1) + ' seconds',
+                '',
+                '**Current status:**',
+                '```json',
+                JSON.stringify(report.current, null, 2),
+                '```',
+                ...(report.playback ? [
+                    '',
+                    '**Playback snapshot:**',
+                    '```json',
+                    JSON.stringify(report.playback, null, 2),
+                    '```'
+                ] : []),
+                '',
+                '**Recent events (oldest first):**',
+                ...(safeEvents.length ? safeEvents.map(event => '- ' + formatEvent(event)).reverse() : ['- None recorded.']),
+                '',
+                '### Console output',
+                '',
+                '```shell',
+                'Not collected. This report does not read browser console output.',
+                '```',
+                '',
+                '### Other Twitch extensions installed',
+                '',
+                'Please list any other Twitch-related extensions (not detected by the script).',
+                '',
+                '### Troubleshooting',
+                '',
+                '- [ ] I have disabled ALL other Twitch-related extensions and the issue still occurs',
+                '- [ ] Issue persists after clearing browser cache and restarting',
+                '- [ ] Issue does NOT occur without the script installed',
+                '',
+                '> Review and complete this report before sharing. It contains no channel name, playlist URL, token, or request header.'
             ].join('\n');
             bugReport.open = true;
             copyReport.hidden = false;
@@ -1944,7 +1999,7 @@
         window.twitchAdSolutionsTools = { openSettings: show, diagnostics: getTASDiagnostics };
     }
     function onContentLoaded() {
-        initializeTASControls('video-swap-new', '1.93');
+        initializeTASControls('video-swap-new', '1.94');
         if (document.getElementById('seventv-extension')) {
             console.log('[AD DEBUG] Warning: 7TV extension detected — may cause black screen or buffering issues. If you experience problems, try disabling 7TV.');
         }

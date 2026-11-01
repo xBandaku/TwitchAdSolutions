@@ -300,7 +300,10 @@ for (const script of scripts) {
             assert.equal(url.protocol, 'https:');
             assert.ok(['github.com', 'raw.githubusercontent.com'].includes(url.hostname));
             assert.ok(url.pathname.startsWith('/xBandaku/TwitchAdSolutions/'));
-            assert.ok(url.pathname.endsWith('/' + script.file));
+            const expectedPath = script.file === 'vaft/vaft-violentmonkey.user.js'
+                ? '/vaft/vaft.user.js'
+                : '/' + script.file;
+            assert.ok(url.pathname.endsWith(expectedPath));
         }
     });
     if (script.worker) {
@@ -330,7 +333,10 @@ for (const pair of [
 }
 
 test('Violentmonkey test install matches vaft runtime', () => {
-    const standard = readScript('vaft/vaft.user.js').replace(/^\/\/ @(?:name|updateURL|downloadURL)[^\r\n]*\r?\n/gm, '');
-    const violentmonkey = readScript('vaft/vaft-violentmonkey.user.js').replace(/^\/\/ @(?:name|updateURL|downloadURL)[^\r\n]*\r?\n/gm, '');
+    const normalizeInstallMetadata = source => source
+        .replace(/^\/\/ @(?:name|updateURL|downloadURL)[^\r\n]*\r?\n/gm, '')
+        .replace(/const TAS_INSTALL_METHOD = '[^']+';/, 'const TAS_INSTALL_METHOD = "INSTALL_METHOD";');
+    const standard = normalizeInstallMetadata(readScript('vaft/vaft.user.js'));
+    const violentmonkey = normalizeInstallMetadata(readScript('vaft/vaft-violentmonkey.user.js'));
     assert.equal(violentmonkey, standard);
 });

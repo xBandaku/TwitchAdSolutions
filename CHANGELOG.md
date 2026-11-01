@@ -1,10 +1,10 @@
 ## Unreleased
 
 - Add a playback timeline in settings showing the newest 20 sanitized local events, distinguishing recovery requests from observed recovery outcomes.
-- Add a readable bug-report preview with a manual copy action. The report includes the script version, current playback snapshot and recent allowlisted event details; it is not sent automatically and reminds users to review it before sharing.
+- Add a ready-to-paste bug report formatted with the repository's GitHub issue-template headings, including the script/version, current playback snapshot and recent allowlisted event details. Unknown browser, extension, console and troubleshooting information is marked for the user to fill in; the report is not sent automatically.
 - Add versioned settings backup export/import for vaft and video-swap-new. Imports are limited to the matching script, validate known settings before writing, roll back on storage errors, and reject files larger than 64 KiB. Invalid saved values prevent creation of an unusable backup.
-- Synthetic browser fixtures cover the timeline, report privacy, settings round-trip and invalid-import atomicity. No new live Twitch playback evidence is claimed.
-- Versions: vaft 68.5.38 (internal 123), video-swap-new 1.93 (internal 61).
+- Synthetic browser fixtures cover the timeline, issue-template-formatted report, settings round-trip and invalid-import atomicity. No new live Twitch playback evidence is claimed.
+- Versions: vaft 68.5.39 (internal 124), video-swap-new 1.94 (internal 62).
 
 ## v68.5.37 (2026-11-01)
 

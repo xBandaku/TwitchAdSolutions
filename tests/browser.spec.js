@@ -980,7 +980,18 @@ for (const file of scripts.filter(script => /^(vaft\/vaft|video-swap-new\/)/.tes
 
         await dialog.getByRole('button', { name: 'Generate bug report' }).click();
         const reportText = await dialog.locator('#bug-report').inputValue();
-        expect(reportText).toContain('TwitchAdSolutions bug report');
+        expect(reportText).toContain('### Before submitting, please check');
+        expect(reportText).toContain('### Which script are you using?');
+        expect(reportText).toContain(file.includes('ublock-origin') ? script + ' (uBlock Origin)' : script + ' (userscript)');
+        expect(reportText).toContain('### Script version\n\n' + script);
+        expect(reportText).toContain('### Browser\n\nPlease fill in');
+        expect(reportText).toContain(file.includes('ublock-origin') ? '### Install method\n\nuBlock Origin'
+            : file.includes('violentmonkey') ? '### Install method\n\nViolentmonkey'
+                : '### Install method\n\nPlease fill in');
+        expect(reportText).toContain('### What happened?');
+        expect(reportText).toContain('### Console output\n\n```shell');
+        expect(reportText).toContain('### Other Twitch extensions installed');
+        expect(reportText).toContain('### Troubleshooting');
         expect(reportText).toContain('local diagnostic events; not proof of live playback');
         expect(reportText).toContain('Backup selected: autoplay / 640x360');
         expect(reportText).not.toContain('private');
