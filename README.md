@@ -1,10 +1,11 @@
 # TwitchAdSolutions
 
-[![Version](https://img.shields.io/github/v/release/xBandaku/TwitchAdSolutions?display_name=tag&label=version)](https://github.com/xBandaku/TwitchAdSolutions/releases)
-[![Stars](https://img.shields.io/github/stars/xBandaku/TwitchAdSolutions?style=flat)](https://github.com/xBandaku/TwitchAdSolutions/stargazers)
-[![Downloads](https://img.shields.io/github/downloads/xBandaku/TwitchAdSolutions/total?label=downloads)](https://github.com/xBandaku/TwitchAdSolutions/releases)
+[![Version](https://img.shields.io/github/v/release/xBandaku/TwitchAdSolutions?display_name=tag&label=version)](https://github.com/xBandaku/TwitchAdSolutions/releases) [![Stars](https://img.shields.io/github/stars/xBandaku/TwitchAdSolutions?style=flat)](https://github.com/xBandaku/TwitchAdSolutions/stargazers) [![Downloads](https://img.shields.io/github/downloads/xBandaku/TwitchAdSolutions/total?label=downloads)](https://github.com/xBandaku/TwitchAdSolutions/releases)
 
-Twitch ad-blocking scripts for userscript managers and uBlock Origin. Start with `vaft`. Playback can pause or temporarily drop to 360p during ads.
+> Twitch ad-blocking scripts for userscript managers and uBlock Origin. Start with **vaft**.
+> Playback may pause or temporarily drop to 360p during ads.
+
+[Install](#install) · [Scripts](#scripts) · [Configuration](#configuration) · [Troubleshooting](#troubleshooting) · [Development](#development)
 
 ## Install
 
@@ -50,15 +51,27 @@ To uninstall, remove the filter and this resource URL. Set `userResourcesLocatio
 
 ## Configuration
 
-No configuration is required. In vaft and video-swap-new, use **Ad blocker settings** in the bottom-right corner of Twitch to change playback preferences. The panel validates values and can reset its settings to defaults. Choose **Settings button position** to move it to another corner, or enable **Hide settings button**. Press **Alt+Shift+A** outside a text field to reopen the panel when hidden. Position and visibility changes apply immediately and persist after reload; resetting restores the bottom-right button. Reload Twitch after saving to apply playback changes.
+No configuration is required.
 
-Vaft also offers **Advanced recovery settings > Refresh the page if player recovery fails**, disabled by default. After two failed recovery attempts and another 3 seconds without playback progress, it can refresh the whole page. It respects pauses and navigation and runs at most once every 5 minutes per tab; unavailable tab storage disables the fallback. A refresh can trigger another ad and interrupt chat.
+### Settings panel
 
-Enable **Show backup and recovery status** for the backup type, selected playlist resolution (or `unknown`), and latest recovery request. The **Playback timeline** shows the newest 20 of up to 100 local events, with recovery requests kept distinct from completed outcomes. **Export diagnostics** downloads the structured event log. **Generate bug report** creates a ready-to-paste report using the repository's GitHub issue-template headings, with the current playback snapshot and recent events. Browser, extension, console, and troubleshooting details the script cannot know are clearly marked for you to fill in; review the report, then use **Copy report** to copy it for manual sharing. Reports are not sent automatically and omit channel names, playlist URLs, tokens and request headers. These local events describe observed requests and state, not proof that playback recovered.
+In vaft and video-swap-new, open **Ad blocker settings** in the bottom-right corner of Twitch to change playback preferences. The panel validates settings and can reset them to defaults. Choose **Settings button position** to move it, or enable **Hide settings button**. Press **Alt+Shift+A** outside a text field to reopen a hidden panel. Position and visibility changes apply immediately and persist; reload Twitch after saving playback changes.
 
-Use **Export settings** to download a versioned JSON backup of this script's settings. **Import settings** accepts backups for the same script only, validates all values before applying them, and rejects malformed or oversized files. Settings are stored locally; reload Twitch after importing to apply playback changes.
+Vaft's **Advanced recovery settings > Refresh the page if player recovery fails** option is off by default. After two failed recovery attempts and another 3 seconds without playback progress, it can refresh the page. It respects pauses and navigation and runs at most once every 5 minutes per tab; unavailable tab storage disables the fallback. A refresh can trigger another ad and interrupt chat.
 
-Console configuration is also available. Each setting uses the `twitchAdSolutions_` prefix. For example, hide the "Blocking ads" banner with:
+### Diagnostics
+
+Enable **Show backup and recovery status** to see the backup type, selected playlist resolution (or `unknown`), and latest recovery request. The **Playback timeline** shows up to 20 of the newest 100 local events, distinguishing recovery requests from completed outcomes.
+
+**Export diagnostics** downloads the event log. **Generate bug report** creates a ready-to-paste report using the repository's issue-template headings, including the current playback snapshot and recent events. Fill in the browser, extension, console, and troubleshooting details that the script cannot know, then review and **Copy report** to share it manually. Reports are never sent automatically and omit channel names, playlist URLs, tokens, and request headers. Events describe observed requests and state; they do not prove playback recovered.
+
+### Settings backup
+
+Use **Export settings** to download a versioned JSON backup. **Import settings** accepts backups for the same script only, validates all values before applying them, and rejects malformed or oversized files. Settings are stored locally; reload Twitch after importing to apply playback changes.
+
+### Advanced settings
+
+Each console setting uses the `twitchAdSolutions_` prefix. For example, hide the "Blocking ads" banner with:
 
 ```js
 localStorage.setItem('twitchAdSolutions_hideAdOverlay', 'true');
@@ -93,6 +106,8 @@ For other options, see the [solution list](full-list.md).
 
 ## Development
 
+### Checks
+
 Use Node.js 22 or 24 and Python 3. Run the checks before submitting changes:
 
 ```sh
@@ -108,9 +123,11 @@ Run `npm run benchmark` for vaft timings. Existing lint violations are tracked i
 
 Tests check syntax, metadata, matching userscript/uBlock logic, serialized workers, and runtime regressions. Packaging writes scripts and `SHA256SUMS` to `release-artifact/`.
 
+### Browser coverage
+
 Browser tests use offline Twitch fixtures in Chromium, Firefox, and WebKit. Windows WebKit skips PCM media cases; Linux CI runs them. Live ads and extension installation need manual testing.
 
-### Test evidence
+### Evidence and captures
 
 `npm test` runs captured-response checks first, then synthetic resilience tests and repository checks. Run `npm run test:captured` or `npm run test:resilience` separately when needed. Browser tests are labeled synthetic unless they replay a recorded response.
 
