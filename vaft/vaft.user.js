@@ -3,8 +3,8 @@
 // @namespace    https://github.com/ryanbr/TwitchAdSolutions
 // @version      68.5.38
 // @description  Multiple solutions for blocking Twitch ads (vaft)
-// @updateURL    https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft.user.js
-// @downloadURL  https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft.user.js
+// @updateURL    https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/diagnostics-settings-tools-test/vaft/vaft.user.js
+// @downloadURL  https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/diagnostics-settings-tools-test/vaft/vaft.user.js
 // @author       https://github.com/cleanlock/VideoAdBlockForTwitch#credits
 // @match        *://*.twitch.tv/*
 // @run-at       document-start
