@@ -7,6 +7,7 @@ const acorn = require('acorn');
 const root = path.join(__dirname, '..');
 const scripts = [
     { file: 'vaft/vaft.user.js', worker: true },
+    { file: 'vaft/vaft-violentmonkey.user.js', worker: true },
     { file: 'vaft/vaft-ublock-origin.js', worker: true },
     { file: 'video-swap-new/video-swap-new.user.js', worker: true },
     { file: 'video-swap-new/video-swap-new-ublock-origin.js', worker: true },

@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         TwitchAdSolutions (video-swap-new)
 // @namespace    https://github.com/ryanbr/TwitchAdSolutions
-// @version      1.92
-// @updateURL    https://github.com/xBandaku/TwitchAdSolutions/raw/master/video-swap-new/video-swap-new.user.js
-// @downloadURL  https://github.com/xBandaku/TwitchAdSolutions/raw/master/video-swap-new/video-swap-new.user.js
+// @version      1.94
+// @updateURL    https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/diagnostics-settings-tools-test/video-swap-new/video-swap-new.user.js
+// @downloadURL  https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/diagnostics-settings-tools-test/video-swap-new/video-swap-new.user.js
 // @description  Multiple solutions for blocking Twitch ads (video-swap-new)
 // @author       pixeltris (original), ryanbr (fork)
 // @match        *://*.twitch.tv/*
@@ -47,7 +47,8 @@
         }
     }
     'use strict';
-    const ourTwitchAdSolutionsVersion = 60;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 62;// Used to prevent conflicts with outdated versions of the scripts
+    const TAS_INSTALL_METHOD = 'userscript';
     console.log('[AD DEBUG] TwitchAdSolutions video-swap-new v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
         console.log('[AD DEBUG] CONFLICT: video-swap-new v' + ourTwitchAdSolutionsVersion + ' skipped — another script already active (v' + window.twitchAdSolutionsVersion + '). Remove duplicate scripts.');
@@ -1619,11 +1620,13 @@
             label.toggle { display: flex; align-items: center; gap: 8px; min-height: 32px; }
             input[type=checkbox] { width: 18px; height: 18px; flex: none; }
             summary { cursor: pointer; padding: 12px 0; }
-            input:not([type=checkbox]), select { display: block; box-sizing: border-box; width: 100%; padding: 6px; }
+            input:not([type=checkbox]), select, textarea { display: block; box-sizing: border-box; width: 100%; padding: 6px; }
             small { display: block; color: #ccc; }
             .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
             #details { background: #202024; padding: 8px; max-width: 320px; margin-bottom: 8px; }
             #feedback { min-height: 1.5em; }
+            #event-list { max-height: 180px; overflow: auto; padding-left: 24px; }
+            #bug-report { min-height: 180px; font: 12px/1.4 monospace; }
         `;
         root.appendChild(style);
         const create = (tag, parent, text) => {
@@ -1692,10 +1695,31 @@
         });
         const feedback = create('p', form);
         feedback.id = 'feedback'; feedback.setAttribute('role', 'status');
+        const timeline = create('details', form);
+        timeline.id = 'timeline';
+        create('summary', timeline, 'Playback timeline (last 20 events)');
+        const eventList = create('ol', timeline);
+        eventList.id = 'event-list';
+        const bugReport = create('details', form);
+        bugReport.id = 'bug-report-panel';
+        create('summary', bugReport, 'Preview shareable bug report');
+        const reportText = create('textarea', bugReport);
+        reportText.id = 'bug-report';
+        reportText.readOnly = true;
+        reportText.rows = 12;
+        const copyReport = create('button', bugReport, 'Copy report');
+        copyReport.type = 'button';
+        copyReport.hidden = true;
         const actions = create('div', form); actions.className = 'actions';
         const save = create('button', actions, 'Save settings'); save.type = 'submit';
         const reset = create('button', actions, 'Reset these settings'); reset.type = 'button';
         const download = create('button', actions, 'Export diagnostics'); download.type = 'button';
+        const exportSettings = create('button', actions, 'Export settings'); exportSettings.type = 'button';
+        const importSettings = create('button', actions, 'Import settings'); importSettings.type = 'button';
+        const settingsFile = create('input', actions);
+        settingsFile.type = 'file';
+        settingsFile.accept = 'application/json,.json';
+        settingsFile.hidden = true;
         const close = create('button', actions, 'Close'); close.type = 'button';
         const storageKey = key => 'twitchAdSolutions_' + key;
         const populate = defaults => {
@@ -1709,6 +1733,31 @@
         state.render = () => {
             details.textContent = 'Backup: ' + state.current.backup + ' | Quality: ' + state.current.quality
                 + ' | Last recovery request: ' + state.current.recovery;
+            eventList.replaceChildren();
+            const recentEvents = state.events.slice(-20).reverse();
+            if (!recentEvents.length) {
+                create('li', eventList, 'No playback events yet.');
+                return;
+            }
+            for (const event of recentEvents) {
+                const seconds = (Math.max(0, Number(event.atMs) || 0) / 1000).toFixed(1) + 's';
+                let description = event.event;
+                if (event.event === 'backup-selected') description = 'Backup selected: ' + event.playerType + ' / ' + event.quality;
+                else if (event.event === 'backup-attempt') description = 'Backup attempted: ' + event.playerType;
+                else if (event.event === 'ad-start') description = 'Ad break started';
+                else if (event.event === 'ad-end') description = 'Ad break ended';
+                else if (event.event === 'reload-request') description = 'Recovery requested: ' + event.reason;
+                else if (event.event === 'reload-start') description = 'Player reload started (attempt ' + event.attempt + ')';
+                else if (event.event === 'recovery-finished') description = event.success
+                    ? 'Recovery finished: playback progress observed' : 'Recovery finished: ' + event.reason;
+                else if (event.event === 'recovery-blocked') description = 'Recovery blocked: ' + event.reason;
+                else if (event.event === 'pause-intent') description = 'Pause intent: ' + event.source;
+                else if (event.event === 'pause-intent-cleared') description = 'Pause intent cleared: ' + event.reason;
+                else if (event.event === 'pause-play') description = 'Player pause/play requested';
+                else if (event.event === 'worker-error') description = 'Worker error observed';
+                else if (event.event === 'page-refresh') description = 'Page refresh requested';
+                create('li', eventList, seconds + ' — ' + description);
+            }
         };
         let previousFocus;
         const show = () => {
@@ -1774,13 +1823,183 @@
             link.href = url; link.download = 'twitch-ad-solutions-diagnostics.json'; link.click(); link.remove();
             setTimeout(() => URL.revokeObjectURL(url), 1000);
         });
+        const downloadJson = (filename, value) => {
+            const url = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2) + '\n'], { type: 'application/json' }));
+            const link = create('a', root);
+            link.href = url; link.download = filename; link.click(); link.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        };
+        const formatEvent = event => {
+            const seconds = (Math.max(0, Number(event.atMs) || 0) / 1000).toFixed(1) + 's';
+            const label = event.event === 'backup-selected' ? 'Backup selected: ' + event.playerType + ' / ' + event.quality
+                : event.event === 'ad-start' ? 'Ad break started'
+                    : event.event === 'ad-end' ? 'Ad break ended'
+                        : event.event === 'reload-request' ? 'Recovery requested: ' + event.reason
+                            : event.event === 'reload-start' ? 'Player reload started (attempt ' + event.attempt + ')'
+                                : event.event === 'recovery-finished' ? (event.success ? 'Recovery finished: playback progress observed' : 'Recovery finished: ' + event.reason)
+                                    : event.event === 'recovery-blocked' ? 'Recovery blocked: ' + event.reason
+                                        : event.event === 'pause-intent' ? 'Pause intent: ' + event.source
+                                            : event.event === 'pause-intent-cleared' ? 'Pause intent cleared: ' + event.reason
+                                                : event.event === 'backup-attempt' ? 'Backup attempted: ' + event.playerType
+                                                    : event.event === 'pause-play' ? 'Player pause/play requested'
+                                                        : event.event === 'page-refresh' ? 'Page refresh requested'
+                                                            : 'Worker error observed';
+            return seconds + ' — ' + label;
+        };
+        const generateBugReport = () => {
+            const report = getTASDiagnostics();
+            const safeEvents = report.events.slice(-20).map(event => ({
+                atMs: event.atMs, event: event.event, playerType: event.playerType, quality: event.quality,
+                reason: event.reason, attempt: event.attempt, success: event.success, source: event.source
+            }));
+            const scriptChoice = script + (TAS_INSTALL_METHOD === 'uBlock Origin' ? ' (uBlock Origin)' : ' (userscript)');
+            reportText.value = [
+                '### Before submitting, please check',
+                '',
+                '- [ ] I am using the latest version (not a permalink)',
+                '- [ ] I have restarted my browser / disabled and re-enabled uBlock Origin',
+                '- [ ] I have checked [Known Extension Conflicts](https://github.com/ryanbr/TwitchAdSolutions/blob/master/README.md#known-extension-conflicts)',
+                '',
+                '### Which script are you using?',
+                '',
+                scriptChoice,
+                '',
+                '### Script version',
+                '',
+                script + ' ' + report.version,
+                '',
+                '### Browser',
+                '',
+                'Please fill in (not collected by the script).',
+                '',
+                '### Install method',
+                '',
+                TAS_INSTALL_METHOD === 'userscript'
+                    ? 'Please fill in your userscript manager (not detected by the script).'
+                    : TAS_INSTALL_METHOD,
+                '',
+                '### What happened?',
+                '',
+                'Please describe what you saw and what you expected.',
+                '',
+                '**Local diagnostic summary** (local diagnostic events; not proof of live playback):',
+                '- Elapsed: ' + (report.elapsedMs / 1000).toFixed(1) + ' seconds',
+                '',
+                '**Current status:**',
+                '```json',
+                JSON.stringify(report.current, null, 2),
+                '```',
+                ...(report.playback ? [
+                    '',
+                    '**Playback snapshot:**',
+                    '```json',
+                    JSON.stringify(report.playback, null, 2),
+                    '```'
+                ] : []),
+                '',
+                '**Recent events (oldest first):**',
+                ...(safeEvents.length ? safeEvents.map(event => '- ' + formatEvent(event)).reverse() : ['- None recorded.']),
+                '',
+                '### Console output',
+                '',
+                '```shell',
+                'Not collected. This report does not read browser console output.',
+                '```',
+                '',
+                '### Other Twitch extensions installed',
+                '',
+                'Please list any other Twitch-related extensions (not detected by the script).',
+                '',
+                '### Troubleshooting',
+                '',
+                '- [ ] I have disabled ALL other Twitch-related extensions and the issue still occurs',
+                '- [ ] Issue persists after clearing browser cache and restarting',
+                '- [ ] Issue does NOT occur without the script installed',
+                '',
+                '> Review and complete this report before sharing. It contains no channel name, playlist URL, token, or request header.'
+            ].join('\n');
+            bugReport.open = true;
+            copyReport.hidden = false;
+        };
+        copyReport.addEventListener('click', async () => {
+            try {
+                await navigator.clipboard.writeText(reportText.value);
+                feedback.textContent = 'Bug report copied. Review it before sharing.';
+            } catch {
+                reportText.focus();
+                reportText.select();
+                feedback.textContent = 'Clipboard unavailable. The report is selected; copy it manually after reviewing.';
+            }
+        });
+        const validSettingValue = (field, value) => {
+            if (value === null) return null;
+            if (typeof value !== 'string') throw new Error('Settings values must be strings or null.');
+            if (field.type === 'boolean') {
+                if (value !== 'true' && value !== 'false') throw new Error('Invalid value for ' + field.key + '.');
+            } else if (Array.isArray(field.type) && typeof field.type[0] === 'string') {
+                if (!field.type.includes(value)) throw new Error('Invalid value for ' + field.key + '.');
+            } else {
+                const number = Number(value);
+                const [min, max, step] = field.type;
+                const steps = (number - min) / step;
+                if (!Number.isFinite(number) || number < min || number > max
+                    || Math.abs(steps - Math.round(steps)) > 1e-8) throw new Error('Invalid value for ' + field.key + '.');
+            }
+            return value;
+        };
+        exportSettings.addEventListener('click', () => {
+            try {
+                const settings = Object.fromEntries(fields.map(field =>
+                    [field.key, validSettingValue(field, localStorage.getItem(storageKey(field.key)))]));
+                downloadJson('twitch-ad-solutions-settings.json', { schemaVersion: 1, script, settings });
+                feedback.textContent = 'Settings backup downloaded.';
+            } catch {
+                feedback.textContent = 'Could not export settings. A saved value is invalid or browser storage is unavailable.';
+            }
+        });
+        importSettings.addEventListener('click', () => settingsFile.click());
+        settingsFile.addEventListener('change', async () => {
+            const file = settingsFile.files?.[0];
+            settingsFile.value = '';
+            if (!file) return;
+            const snapshot = new Map();
+            try {
+                if (file.size > 65536) throw new Error('Settings backup is too large to import.');
+                const backup = JSON.parse(await file.text());
+                if (!backup || backup.schemaVersion !== 1 || backup.script !== script
+                    || !backup.settings || typeof backup.settings !== 'object' || Array.isArray(backup.settings)) {
+                    throw new Error('This is not a compatible settings backup for ' + script + '.');
+                }
+                const byKey = new Map(fields.map(field => [field.key, field]));
+                for (const key of Object.keys(backup.settings)) {
+                    if (!byKey.has(key)) throw new Error('Unknown setting: ' + key + '.');
+                    validSettingValue(byKey.get(key), backup.settings[key]);
+                }
+                for (const field of fields) snapshot.set(storageKey(field.key), localStorage.getItem(storageKey(field.key)));
+                for (const [key, value] of Object.entries(backup.settings)) {
+                    if (value === null) localStorage.removeItem(storageKey(key));
+                    else localStorage.setItem(storageKey(key), value);
+                }
+                populate(false);
+                applyPresentation();
+                feedback.textContent = 'Settings imported. Reload Twitch to apply playback changes.';
+            } catch (error) {
+                for (const [key, value] of snapshot) {
+                    try { if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, value); } catch { /* Storage can remain unavailable. */ }
+                }
+                feedback.textContent = error instanceof Error ? error.message : 'Could not import settings.';
+            }
+        });
+        const generateReport = create('button', actions, 'Generate bug report');
+        generateReport.type = 'button';
+        generateReport.addEventListener('click', generateBugReport);
         document.body.appendChild(host);
         try { applyPresentation(); } catch { /* Settings remain accessible without storage. */ }
         state.render();
         window.twitchAdSolutionsTools = { openSettings: show, diagnostics: getTASDiagnostics };
     }
     function onContentLoaded() {
-        initializeTASControls('video-swap-new', '1.92');
+        initializeTASControls('video-swap-new', '1.94');
         if (document.getElementById('seventv-extension')) {
             console.log('[AD DEBUG] Warning: 7TV extension detected — may cause black screen or buffering issues. If you experience problems, try disabling 7TV.');
         }
