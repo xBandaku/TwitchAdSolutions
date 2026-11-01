@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TwitchAdSolutions (vaft)
 // @namespace    https://github.com/ryanbr/TwitchAdSolutions
-// @version      68.5.36
+// @version      68.5.37
 // @description  Multiple solutions for blocking Twitch ads (vaft)
 // @updateURL    https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft.user.js
 // @downloadURL  https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft.user.js
@@ -48,7 +48,7 @@
         }
     }
     'use strict';
-    const ourTwitchAdSolutionsVersion = 121;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 122;// Used to prevent conflicts with outdated versions of the scripts
     console.log('[AD DEBUG] TwitchAdSolutions vaft v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
         console.log('[AD DEBUG] CONFLICT: vaft v' + ourTwitchAdSolutionsVersion + ' skipped — another script already active (v' + window.twitchAdSolutionsVersion + '). Remove duplicate scripts.');
@@ -2199,8 +2199,6 @@
             playerBufferState.userPauseIntent = false;
             playerBufferState.pauseIntentVideo = null;
             playerBufferState.pauseIntentSource = null;
-            playerBufferState.pauseInputVideo = null;
-            playerBufferState.pauseInputAt = 0;
             playerBufferState.loggedPauseIntent = false;
         };
         if (!playerBufferState.pauseInputHooked) {
@@ -2235,7 +2233,7 @@
         const activeVideo = () => getPlayerAndState()?.player?.getHTMLVideoElement?.() === video;
         video.addEventListener('pause', () => {
             if (!activeVideo() || document.hidden) return;
-            const recentInput = (playerBufferState.pauseInputVideo === video
+            const recentInput = (playerBufferState.pauseInputAt > 0
                 && Date.now() - playerBufferState.pauseInputAt <= 1500)
                 || (playerBufferState.userPauseIntent && playerBufferState.pauseIntentVideo === video && playerBufferState.pauseIntentSource === 'input');
             if (!recentInput && playerBufferState.weJustPaused && Date.now() - playerBufferState.weJustPaused <= 2000) return;
@@ -3611,7 +3609,7 @@
         window.twitchAdSolutionsTools = { openSettings: show, diagnostics: getTASDiagnostics };
     }
     function onContentLoaded() {
-        initializeTASControls('vaft', '68.5.36');
+        initializeTASControls('vaft', '68.5.37');
         if (document.getElementById('seventv-extension')) {
             console.log('[AD DEBUG] Warning: 7TV extension detected — may cause black screen or buffering issues. If you experience problems, try disabling 7TV.');
         }
