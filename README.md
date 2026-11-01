@@ -1,11 +1,23 @@
-# TwitchAdSolutions
+<h1 align="center">TwitchAdSolutions</h1>
 
-[![Version](https://img.shields.io/github/v/release/xBandaku/TwitchAdSolutions?display_name=tag&label=version)](https://github.com/xBandaku/TwitchAdSolutions/releases) [![Stars](https://img.shields.io/github/stars/xBandaku/TwitchAdSolutions?style=flat)](https://github.com/xBandaku/TwitchAdSolutions/stargazers) [![Downloads](https://img.shields.io/github/downloads/xBandaku/TwitchAdSolutions/total?label=downloads)](https://github.com/xBandaku/TwitchAdSolutions/releases)
+<p align="center">
+  <a href="https://github.com/xBandaku/TwitchAdSolutions/releases"><img src="https://img.shields.io/github/v/release/xBandaku/TwitchAdSolutions?display_name=tag&label=version" alt="Latest version"></a>
+  <a href="https://github.com/xBandaku/TwitchAdSolutions/stargazers"><img src="https://img.shields.io/github/stars/xBandaku/TwitchAdSolutions?style=flat" alt="GitHub stars"></a>
+  <a href="https://github.com/xBandaku/TwitchAdSolutions/releases"><img src="https://img.shields.io/github/downloads/xBandaku/TwitchAdSolutions/total?label=downloads" alt="Total downloads"></a>
+</p>
 
-> Twitch ad-blocking scripts for userscript managers and uBlock Origin. Start with **vaft**.
-> Playback may pause or temporarily drop to 360p during ads.
+<p align="center">
+  Twitch ad-blocking scripts for userscript managers and uBlock Origin. Start with <strong>vaft</strong>.<br>
+  Playback may pause or temporarily drop to 360p during ads.
+</p>
 
-[Install](#install) · [Scripts](#scripts) · [Configuration](#configuration) · [Troubleshooting](#troubleshooting) · [Development](#development)
+<p align="center">
+  <a href="#install">Install</a> ·
+  <a href="#scripts">Scripts</a> ·
+  <a href="#configuration">Configuration</a> ·
+  <a href="#troubleshooting">Troubleshooting</a> ·
+  <a href="#development">Development</a>
+</p>
 
 ## Install
 
