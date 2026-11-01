@@ -1,3 +1,12 @@
+## v68.5.37 (2026-11-01)
+
+- Preserve a recent trusted playback-control input when clearing older pause intent. A subsequent native pause can still be attributed to the user instead of being inferred as a Twitch/player pause.
+- Match trusted input to a pause by its short 1.5-second age window rather than video-element identity, so a Twitch video replacement between the user action and pause event does not discard the intent.
+- Apply both fixes consistently to the vaft userscript and uBlock Origin resource. The input cue is consumed by the pause event and still expires through the existing time limit.
+- Evidence classification: synthetic edge case. The event sequences were reproduced with synthetic player fixtures; no live Twitch reproduction is claimed.
+- Validation: the two new regression cases fail against the pre-fix `e42f2b8` source in both vaft formats and pass after the change. See PR validation for the exact commands and complete test results.
+- Version: vaft 68.5.37 (internal 122). Other script versions are unchanged.
+
 ## v68.5.36 (2026-10-17)
 
 - Fix vaft pause-intent detection so an internal video pause does not permanently block recovery when Twitch's logical player and core still report playing. Reconcile inferred intent after a 350ms settling window and on subsequent monitor ticks. Preserve pauses associated with trusted playback-control input or logical paused state; ignore pause/play events from replaced videos.

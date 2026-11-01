@@ -116,6 +116,35 @@ for (const file of files) {
         h.context.doTwitchPlayerTask.recovery.cancel();
     });
 
+    test('synthetic resilience: ' + file + ' preserves trusted input when clearing prior pause intent', () => {
+        const h = monitorHarness(file);
+        const video = h.current.player.video;
+        h.listeners.get('keydown')({ isTrusted: true, type: 'keydown', code: 'KeyK', target: { tagName: 'BODY' } });
+        h.context.playerBufferState.userPauseIntent = true;
+        h.context.playerBufferState.pauseIntentVideo = video;
+        h.context.playerBufferState.pauseIntentSource = 'inferred';
+        video.paused = false;
+        h.videoEvents.get('play')();
+        assert.ok(h.context.playerBufferState.pauseInputAt > 0, 'clearing intent erased a newer trusted input');
+        video.paused = true;
+        h.videoEvents.get('pause')();
+        assert.equal(h.context.playerBufferState.pauseIntentSource, 'input');
+    });
+
+    test('synthetic resilience: ' + file + ' accepts recent trusted input after video replacement', () => {
+        const h = monitorHarness(file);
+        h.listeners.get('keydown')({ isTrusted: true, type: 'keydown', code: 'KeyK', target: { tagName: 'BODY' } });
+        const video = { ...h.current.player.video, paused: true, __tasIntentHooked: false,
+            addEventListener(name, callback) { h.videoEvents.set(name, callback); } };
+        h.current.player.video = video;
+        h.current.player.getHTMLVideoElement = () => video;
+        h.context.monitorPlayerBuffering();
+        h.videoEvents.get('pause')();
+        assert.equal(h.context.playerBufferState.userPauseIntent, true);
+        assert.equal(h.context.playerBufferState.pauseIntentSource, 'input');
+        assert.equal(h.context.playerBufferState.pauseInputAt, 0, 'accepted input cue should be consumed');
+    });
+
     for (const event of ['pause', 'play']) {
         test('synthetic resilience: ' + file + ' pause ownership ignores replaced-video ' + event, () => {
             const h = monitorHarness(file);
