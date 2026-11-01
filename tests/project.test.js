@@ -328,3 +328,9 @@ for (const pair of [
         assert.equal(version(left), version(right));
     });
 }
+
+test('Violentmonkey test install matches vaft runtime', () => {
+    const standard = readScript('vaft/vaft.user.js').replace(/^\/\/ @(?:name|updateURL|downloadURL)[^\r\n]*\r?\n/gm, '');
+    const violentmonkey = readScript('vaft/vaft-violentmonkey.user.js').replace(/^\/\/ @(?:name|updateURL|downloadURL)[^\r\n]*\r?\n/gm, '');
+    assert.equal(violentmonkey, standard);
+});

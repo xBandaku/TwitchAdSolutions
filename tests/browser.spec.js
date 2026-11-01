@@ -734,7 +734,7 @@ for (const file of scripts.filter(script => script.file.includes('brave-fix')).m
     });
 }
 
-for (const file of ['vaft/vaft.user.js', 'vaft/vaft-ublock-origin.js',
+for (const file of ['vaft/vaft.user.js', 'vaft/vaft-violentmonkey.user.js', 'vaft/vaft-ublock-origin.js',
     'video-swap-new/video-swap-new.user.js', 'video-swap-new/video-swap-new-ublock-origin.js']) {
     test('synthetic resilience: ' + file + ' preserves recovery numbering and blocks relative ad media inside its injected worker', async ({ page, context }) => {
         const state = await boot(page, context, file);

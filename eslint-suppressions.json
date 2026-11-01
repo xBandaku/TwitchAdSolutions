@@ -44,6 +44,14 @@
       "count": 1
     }
   },
+  "vaft/vaft-violentmonkey.user.js": {
+    "no-useless-assignment": {
+      "count": 2
+    },
+    "no-useless-escape": {
+      "count": 1
+    }
+  },
   "video-swap-new/video-swap-new-ublock-origin.js": {
     "no-empty": {
       "count": 1
