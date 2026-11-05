@@ -1,4 +1,5 @@
 node_modules/
+.tools/
 playwright-report/
 test-results/
 __pycache__/
