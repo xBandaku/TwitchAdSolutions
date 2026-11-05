@@ -118,18 +118,10 @@ For other options, see the [solution list](full-list.md).
 
 ## Development
 
+See [Development requirements](REQUIREMENTS.md) for prerequisites, repeatable
+dependency installation, and the full local verification commands.
+
 ### Checks
-
-Use Node.js 22 or 24 and Python 3. Run the checks before submitting changes:
-
-```sh
-npm ci --ignore-scripts
-npm run lint
-npm test
-npm run test:package
-npx playwright install
-npm run test:browser
-```
 
 Run `npm run benchmark` for vaft timings. Existing lint violations are tracked in `eslint-suppressions.json`; new violations fail lint.
 
