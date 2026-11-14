@@ -75,6 +75,10 @@ Vaft's **Advanced recovery settings > Refresh the page if player recovery fails*
 
 Enable **Show backup and recovery status** to see the backup type, selected playlist resolution (or `unknown`), and latest recovery request. The **Playback timeline** shows up to 20 of the newest 100 local events, distinguishing recovery requests from completed outcomes.
 
+Worker interception status is **confirmed** when the active worker acknowledges hook initialization, **intercepted** while acknowledgement is absent, **unknown** when Twitch's worker handle is inaccessible, or **possible-miss** when the accessible active worker is not recognized. Confirmation does not establish that every playlist is filtered. These observations never trigger a reload.
+
+Request outcomes distinguish token API errors, HTTP failures, invalid playlist/token responses, and network, body-read or timeout failures for observed token and playlist requests. Timing and readable HTTP status are included. A valid playlist response does not prove segment delivery or playback, and a network error does not identify whether the browser, an extension or the network blocked it. No extra diagnostic network requests are sent.
+
 **Export diagnostics** downloads the event log. **Generate bug report** creates a ready-to-paste report using the repository's issue-template headings, including the current playback snapshot and recent events. Fill in the browser, extension, console, and troubleshooting details that the script cannot know, then review and **Copy report** to share it manually. Reports are never sent automatically and omit channel names, playlist URLs, tokens, and request headers. Events describe observed requests and state; they do not prove playback recovered.
 
 ### Settings backup
