@@ -6,6 +6,62 @@ const { scripts, readScript } = require('./scripts');
 const states = new WeakMap();
 const cleanPlaylist = '#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2.000,live\nhttps://www.twitch.tv/fixtures/live.ts\n';
 
+for (const { file } of scripts.filter(({ file }) => /^(vaft\/vaft|video-swap-new\/video-swap-new)/.test(file))) {
+    test('synthetic resilience: worker acknowledgement and request outcomes reach reports in ' + file, async ({ page, context }) => {
+        await boot(page, context, file);
+        await page.evaluate(async vaft => {
+            const source = `
+                (async () => {
+                    if (${vaft}) {
+                        await fetchPlaylist('https://www.twitch.tv/fixtures/clean.m3u8', fetch, 1000, true);
+                        await fetchPlaylist('https://www.twitch.tv/fixtures/passthrough', fetch, 1000);
+                    } else {
+                        const response = await observeTASFetch('media', fetch, 'https://www.twitch.tv/fixtures/clean.m3u8');
+                        await readTASPlaylist(response, 'media');
+                        await observeTASFetch('master', fetch, 'https://www.twitch.tv/fixtures/passthrough');
+                    }
+                    self.postMessage({key:'FetchRequest',value:{id:'diagnostic-fixture',diagnosticStage:'token',
+                        url:'https://gql.twitch.tv/gql',options:{method:'POST',body:'{}'}}});
+                    self.postMessage({fixtureDone:true});
+                })();
+            `;
+            const worker = new Worker(URL.createObjectURL(new Blob([source], { type: 'text/javascript' })));
+            window.__workerFixture = { core: { worker }, getHTMLVideoElement: () => document.querySelector('video') };
+            const owner = { setPlayerActive() {}, props: { mediaPlayerInstance: window.__workerFixture } };
+            document.getElementById('root')._reactRootContainer = { _internalRoot: { current: { stateNode: owner } } };
+            await new Promise(resolve => worker.addEventListener('message', event => { if (event.data.fixtureDone) resolve(); }));
+        }, file.startsWith('vaft/'));
+        await expect.poll(() => page.evaluate(() => window.twitchAdSolutionsTools.diagnostics().current.workerStatus)).toBe('confirmed');
+        await expect.poll(() => page.evaluate(() => window.twitchAdSolutionsTools.diagnostics().events.some(event =>
+            event.event === 'request-outcome' && event.stage === 'token' && event.outcome === 'api-error'))).toBe(true);
+        const report = await page.evaluate(() => window.twitchAdSolutionsTools.diagnostics());
+        expect(report.events).toEqual(expect.arrayContaining([
+            expect.objectContaining({ event: 'request-outcome', stage: 'media', outcome: 'ok', status: 200 }),
+            expect.objectContaining({ event: 'request-outcome', stage: 'master', outcome: 'http-error', status: 207 })
+        ]));
+        const serialized = JSON.stringify(report);
+        expect(serialized).not.toContain('gql.twitch.tv');
+        expect(serialized).not.toContain('fixture-channel');
+        await page.getByRole('button', { name: 'Ad blocker settings', exact: true }).click();
+        const dialog = page.getByRole('dialog', { name: 'Ad blocker settings' });
+        await dialog.locator('#timeline summary').click();
+        await expect(dialog.locator('#event-list')).toContainText('Worker interception: confirmed');
+        await expect(dialog.locator('#event-list')).toContainText('token: api-error');
+        await dialog.getByRole('button', { name: 'Generate bug report' }).click();
+        expect(await dialog.locator('#bug-report').inputValue()).toContain('token: api-error');
+        await page.evaluate(() => {
+            window.__workerFixture.core.worker.terminate();
+            window.__workerFixture.core.worker = new window.__nativeWorker(URL.createObjectURL(new Blob(['self.onmessage = () => {};'])));
+        });
+        expect(await page.evaluate(() => window.twitchAdSolutionsTools.diagnostics().current.workerStatus)).toBe('possible-miss');
+        await page.evaluate(() => {
+            window.__workerFixture.core.worker.terminate();
+            delete window.__workerFixture.core.worker;
+        });
+        expect(await page.evaluate(() => window.twitchAdSolutionsTools.diagnostics().current.workerStatus)).toBe('unknown');
+    });
+}
+
 const capturedDirectory = path.join(__dirname, 'fixtures/captured');
 for (const name of fs.readdirSync(capturedDirectory).filter(file => file.endsWith('.json'))) {
     const capture = JSON.parse(fs.readFileSync(path.join(capturedDirectory, name), 'utf8'));

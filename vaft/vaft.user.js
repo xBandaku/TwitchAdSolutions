@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TwitchAdSolutions (vaft)
 // @namespace    https://github.com/ryanbr/TwitchAdSolutions
-// @version      68.5.39
+// @version      68.5.41
 // @description  Multiple solutions for blocking Twitch ads (vaft)
 // @updateURL    https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft.user.js
 // @downloadURL  https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft.user.js
@@ -48,7 +48,7 @@
         }
     }
     'use strict';
-    const ourTwitchAdSolutionsVersion = 124;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 126;// Used to prevent conflicts with outdated versions of the scripts
     const TAS_INSTALL_METHOD = 'userscript';
     console.log('[AD DEBUG] TwitchAdSolutions vaft v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
@@ -141,9 +141,18 @@
     }
     function pruneStreamInfos() {
         const now = Date.now();
+        // A paused player can resume its existing variant without fetching a master.
+        // Keep the most recently seen stream even when idle; older channels still expire.
+        let newestStream = null;
+        for (const channelName in StreamInfos) {
+            const candidate = StreamInfos[channelName];
+            if (candidate && candidate.LastSeenAt && (!newestStream || candidate.LastSeenAt >= newestStream.LastSeenAt)) {
+                newestStream = candidate;
+            }
+        }
         for (const channelName in StreamInfos) {
             const streamInfo = StreamInfos[channelName];
-            if (!streamInfo || !streamInfo.LastSeenAt || (now - streamInfo.LastSeenAt) > StreamInfoMaxAgeMs) {
+            if (!streamInfo || !streamInfo.LastSeenAt || (streamInfo !== newestStream && (now - streamInfo.LastSeenAt) > StreamInfoMaxAgeMs)) {
                 if (streamInfo && streamInfo.Urls) {
                     for (const url in streamInfo.Urls) {
                         delete StreamInfosByUrl[url];
@@ -337,6 +346,7 @@
     let injectedBlobUrl = null;
     let originalRevokeObjectURL = null;
     function hookWindowWorker() {
+        hookWindowWorker.workers ||= new WeakMap();
         // Prevent Twitch from revoking our injected worker blob URL
         if (!URL.revokeObjectURL.__tasMasked) {
             originalRevokeObjectURL = URL.revokeObjectURL;
@@ -387,6 +397,7 @@
                     ${postStreamMessage.toString()}
                     ${hookWorkerFetch.toString()}
                     ${declareOptions.toString()}
+                    ${reportTASRequest.toString()}
                     ${fetchPlaylist.toString()}
                     ${getAccessToken.toString()}
                     ${gqlRequest.toString()}
@@ -487,6 +498,7 @@
                         }
                     });
                     hookWorkerFetch();
+                    postMessage({ key: 'TASWorkerReady', value: 1 });
                     // Guard the eval — malformed workerString shouldn't silently break
                     // Twitch's player logic without a diagnostic. Worker stays alive on
                     // throw (vaft hooks installed above), but Twitch's logic wouldn't run.
@@ -506,8 +518,10 @@
                 }
                 twitchWorkers.length = 0;
                 twitchWorkers.push(this);
+                hookWindowWorker.workers.set(this, 'intercepted');
                 let latestStreamSession = 0;
                 this.addEventListener('message', (e) => {
+                    if (acceptTASWorkerReady(this, e.data)) return;
                     if (!isCurrentStreamMessage(this, e.data)) return;
                     if (e.data.sessionId < latestStreamSession) return;
                     if (e.data.sessionId) latestStreamSession = e.data.sessionId;
@@ -537,7 +551,7 @@
                     if (!twitchWorkers.includes(this)) return;
                     if (event.data.key == 'FetchRequest') {
                         const fetchRequest = event.data.value;
-                        const responseData = await handleWorkerFetchRequest(fetchRequest);
+                        const responseData = await handleWorkerFetchRequest(fetchRequest, this);
                         if (!twitchWorkers.includes(this)) return;
                         this.postMessage({
                             key: 'FetchResponse',
@@ -799,15 +813,30 @@
     }
     async function fetchPlaylist(url, realFetch, timeout = BackupRequestTimeout, media = false) {
         if (!url || timeout <= 0) return null;
+        const startedAt = Date.now();
+        const stage = media ? 'media' : 'master';
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeout);
+        let status = null;
+        let reading = false;
         try {
             const response = await realFetch(url, { signal: controller.signal });
-            if (response.status !== 200) return null;
+            status = response.status;
+            if (status !== 200) {
+                reportTASRequest(stage, 'http-error', status, startedAt);
+                return null;
+            }
+            reading = true;
             const text = await response.text();
-            if (!text.trimStart().startsWith('#EXTM3U') || (media && !text.includes('#EXTINF:'))) return null;
-            return resolvePlaylistUrls(text, response.url || url);
+            if (!text.trimStart().startsWith('#EXTM3U') || (media && !text.includes('#EXTINF:'))) {
+                reportTASRequest(stage, 'invalid-response', status, startedAt);
+                return null;
+            }
+            const resolved = resolvePlaylistUrls(text, response.url || url);
+            reportTASRequest(stage, 'ok', status, startedAt);
+            return resolved;
         } catch (error) {
+            reportTASRequest(stage, controller.signal.aborted ? 'timeout' : reading ? 'body-error' : 'network-error', status, startedAt);
             console.log('[AD DEBUG] Backup playlist fetch failed: ' + error.message);
             return null;
         } finally {
@@ -2092,10 +2121,12 @@
             ...(ClientVersion && {'Client-Version': ClientVersion}),
             ...(ClientSession && {'Client-Session-Id': ClientSession})
         };
+        const requestStartedAt = Date.now();
         return new Promise((resolve, reject) => {
             const requestId = Math.random().toString(36).substring(2, 15);
             const fetchRequest = {
                 id: requestId,
+                diagnosticStage: body.operationName === 'PlaybackAccessToken' ? 'token' : undefined,
                 timeout,
                 url: 'https://gql.twitch.tv/gql',
                 options: {
@@ -2107,6 +2138,7 @@
             const timeoutId = setTimeout(() => {
                 if (pendingFetchRequests.has(requestId)) {
                     pendingFetchRequests.delete(requestId);
+                    if (body.operationName === 'PlaybackAccessToken') reportTASRequest('token', 'timeout', null, requestStartedAt);
                     reject(new Error('FetchRequest timed out'));
                 }
             }, timeout ?? 15000);
@@ -2255,6 +2287,7 @@
     }
     // Poll the player state to detect and fix buffering caused by ad stream switching
     function monitorPlayerBuffering() {
+        updateTASWorkerDiagnostic();
         clearTimeout(monitorPlayerBuffering.timeoutId);
         let rescheduleDelay = PlayerBufferingDelay;
         try {
@@ -3238,7 +3271,10 @@
             worker.postMessage({key: key, value: value});
         });
     }
-    async function handleWorkerFetchRequest(fetchRequest) {
+    async function handleWorkerFetchRequest(fetchRequest, worker) {
+        const startedAt = Date.now();
+        let status = null;
+        let reading = false;
         // 5s AbortController timeout. The worker uses this path for GQL requests
         // (access tokens + ad-spoof beacons). Without a timeout, a hung GQL endpoint
         // would block the worker's backup-search loop indefinitely (until browser's
@@ -3254,7 +3290,11 @@
                 ...fetchRequest.options,
                 signal: controller.signal
             });
+            status = response.status;
+            reading = true;
             const responseBody = await response.text();
+            if (fetchRequest.diagnosticStage === 'token' && (!worker || twitchWorkers.includes(worker))) recordTASDiagnostic({ event: 'request-outcome', stage: 'token',
+                outcome: classifyTASTokenResponse(response.status, responseBody), status: response.status, durationMs: Date.now() - startedAt });
             clearTimeout(timeoutId);
             const responseObject = {
                 id: fetchRequest.id,
@@ -3269,6 +3309,8 @@
             };
             return responseObject;
         } catch (error) {
+            if (fetchRequest.diagnosticStage === 'token' && (!worker || twitchWorkers.includes(worker))) recordTASDiagnostic({ event: 'request-outcome', stage: 'token',
+                outcome: controller.signal.aborted ? 'timeout' : reading ? 'body-error' : 'network-error', status, durationMs: Date.now() - startedAt });
             clearTimeout(timeoutId);
             return {
                 id: fetchRequest.id,
@@ -3370,66 +3412,137 @@
             };
         } catch { return { available: false }; }
     }
+    // Observational only: these helpers never request recovery or export request data.
+    function getTASWorkerStatus() {
+        try {
+            const worker = getPlayerAndState()?.player?.core?.worker;
+            if (!worker || typeof worker.postMessage !== 'function') return 'unknown';
+            return hookWindowWorker.workers?.get(worker) || 'possible-miss';
+        } catch { return 'unknown'; }
+    }
+    function updateTASWorkerDiagnostic() {
+        recordTASDiagnostic({ event: 'worker-status', status: getTASWorkerStatus() });
+    }
+    function acceptTASWorkerReady(worker, data) {
+        if (data?.key !== 'TASWorkerReady' || data.value !== 1 || !hookWindowWorker.workers?.has(worker)) return false;
+        hookWindowWorker.workers.set(worker, 'confirmed');
+        updateTASWorkerDiagnostic();
+        return true;
+    }
+    function reportTASRequest(stage, outcome, status, startedAt) {
+        try {
+            postMessage({ key: 'TASDiagnostic', event: 'request-outcome', stage, outcome, status,
+                durationMs: Math.max(0, Date.now() - startedAt) });
+        } catch {} // Diagnostics must not alter a request's result or exception.
+    }
+    function classifyTASTokenResponse(status, body) {
+        if (status !== 200) return 'http-error';
+        try {
+            const parsed = JSON.parse(body);
+            const token = parsed?.data?.streamPlaybackAccessToken || parsed?.streamPlaybackAccessToken;
+            if (token && typeof token.signature === 'string' && typeof token.value === 'string') return 'ok';
+            return parsed?.errors ? 'api-error' : 'invalid-response';
+        } catch { return 'invalid-response'; }
+    }
+    function describeTASDiagnostic(event) {
+        if (event.event === 'worker-status') return 'Worker interception: ' + event.status + ' (initialization only)';
+        if (event.event === 'request-outcome') return event.stage + ': ' + event.outcome
+            + (event.status ? ' (HTTP ' + event.status + ')' : '')
+            + (Number.isFinite(event.durationMs) ? ' / ' + Math.round(event.durationMs) + ' ms' : '');
+        return null;
+    }
+    function getTASDiagnosticState() {
+        if (typeof window === 'undefined') return null;
+        return window.__tasDiagnostics || (window.__tasDiagnostics = { script: 'vaft', version: '68.5.41',
+            startedAt: Date.now(), events: [], current: { backup: 'none', quality: 'unknown', recovery: 'none', inAdBreak: false }, render() {} });
+    }
     function getTASDiagnostics() {
-        const state = window.__tasDiagnostics;
+        const state = getTASDiagnosticState();
         if (!state) return null;
         return {
             schemaVersion: 2, evidence: 'local diagnostic events; not proof of live playback',
             script: state.script, version: state.version,
             elapsedMs: Math.max(0, Date.now() - state.startedAt),
-            current: { ...state.current }, playback: getTASPlaybackSnapshot(), events: state.events.map(event => ({ ...event }))
+            current: { ...state.current, workerStatus: getTASWorkerStatus() }, playback: getTASPlaybackSnapshot(), events: state.events.map(event => ({ ...event }))
         };
     }
     function recordTASDiagnostic(data) {
-        if (typeof window === 'undefined' || !window.__tasDiagnostics) return;
-        const state = window.__tasDiagnostics;
-        const allowedEvents = ['backup-attempt', 'backup-selected', 'ad-start', 'ad-end', 'reload-request', 'pause-play', 'worker-error', 'reload-start', 'recovery-finished', 'recovery-blocked', 'page-refresh', 'pause-intent', 'pause-intent-cleared'];
-        if (!allowedEvents.includes(data.event)) return;
-        if (data.event === 'backup-selected' && data.playerType === state.current.backup && data.quality === state.current.quality) return;
-        if (data.event === 'reload-request' || data.event === 'reload-start') state.current.recoveryOutcome = null;
-        const entry = { atMs: Math.max(0, Date.now() - state.startedAt), event: data.event };
-        if (data.event === 'page-refresh') state.current.recoveryOutcome = 'page-refresh-requested';
-        if (data.event === 'pause-intent') entry.source = data.source === 'input' ? 'input' : 'inferred';
-        if (data.event === 'pause-intent-cleared') entry.reason = ['play', 'player-playing', 'video-replaced'].includes(data.reason) ? data.reason : 'play';
-        if (data.event === 'recovery-blocked') {
-            entry.reason = ['unavailable', 'user-pause', 'not-live', 'paused'].includes(data.reason) ? data.reason : 'unavailable';
-            state.current.recoveryOutcome = 'blocked-' + entry.reason;
-        }
-        if (data.event === 'reload-start' || data.event === 'recovery-finished') {
-            entry.attempt = Number.isInteger(data.attempt) && data.attempt >= 0 && data.attempt <= 3 ? data.attempt : 0;
-            if (data.event === 'reload-start') entry.hardReload = data.hardReload === true;
-            else {
-                entry.success = data.success === true;
-                entry.reason = ['progress', 'timeout', 'unavailable', 'exception', 'cancelled'].includes(data.reason) ? data.reason : 'cancelled';
-                state.current.recoveryOutcome = entry.success ? 'progress-observed' : entry.reason;
+        try {
+            const state = getTASDiagnosticState();
+            if (!state) return;
+            const allowedEvents = ['worker-status', 'request-outcome', 'backup-attempt', 'backup-selected', 'ad-start', 'ad-end', 'reload-request', 'pause-play', 'worker-error', 'reload-start', 'recovery-finished', 'recovery-blocked', 'page-refresh', 'pause-intent', 'pause-intent-cleared'];
+            if (!allowedEvents.includes(data.event)) return;
+            if (data.event === 'worker-status') {
+                if (!['confirmed', 'intercepted', 'unknown', 'possible-miss'].includes(data.status)) return;
+                if (state.current.workerStatus === data.status) return;
             }
-        }
-        if (data.playerType !== undefined) {
-            entry.playerType = ['popout', 'embed', 'site', 'mobile_web', 'autoplay'].includes(data.playerType) ? data.playerType : 'unknown';
-        }
-        if (data.quality !== undefined) entry.quality = /^\d{1,5}x\d{1,5}$/.test(data.quality) ? data.quality : 'unknown';
-        if (Number.isFinite(data.durationMs)) entry.durationMs = Math.min(60000, Math.max(0, data.durationMs));
-        if (data.event === 'reload-request') {
-            entry.reason = ['early', 'worker-error', 'normal'].includes(data.reason) ? data.reason : 'normal';
-            state.current.recovery = entry.reason;
-        }
-        if (data.event === 'backup-selected') {
-            state.current.backup = entry.playerType || 'unknown';
-            state.current.quality = entry.quality || 'unknown';
-        }
-        if (data.event === 'ad-start' || data.event === 'ad-end') {
-            state.current.inAdBreak = data.event === 'ad-start';
-            state.current.backup = 'none';
-            state.current.quality = 'unknown';
-        }
-        state.events.push(entry);
-        if (state.events.length > 100) state.events.shift();
-        state.render();
+            if (data.event === 'request-outcome') {
+                if (!['token', 'master', 'media'].includes(data.stage)
+                    || !['ok', 'http-ok', 'http-error', 'invalid-response', 'api-error', 'timeout', 'aborted', 'network-error', 'body-error'].includes(data.outcome)) return;
+                const status = Number.isInteger(data.status) && data.status >= 100 && data.status <= 599 ? data.status : null;
+                const previous = state.events.at(-1);
+                if (previous?.event === data.event && previous.stage === data.stage && previous.outcome === data.outcome
+                    && previous.status === status && Date.now() - state.startedAt - previous.atMs < 5000) return;
+            }
+            if (data.event === 'backup-selected' && data.playerType === state.current.backup && data.quality === state.current.quality) return;
+            if (data.event === 'reload-request' || data.event === 'reload-start') state.current.recoveryOutcome = null;
+            const entry = { atMs: Math.max(0, Date.now() - state.startedAt), event: data.event };
+            if (data.event === 'worker-status') {
+                entry.status = data.status;
+                state.current.workerStatus = entry.status;
+            }
+            if (data.event === 'request-outcome') {
+                entry.stage = data.stage;
+                entry.outcome = data.outcome;
+                entry.status = Number.isInteger(data.status) && data.status >= 100 && data.status <= 599 ? data.status : null;
+                state.current.lastRequest = entry.stage + ': ' + entry.outcome;
+            }
+            if (data.event === 'page-refresh') state.current.recoveryOutcome = 'page-refresh-requested';
+            if (data.event === 'pause-intent') entry.source = data.source === 'input' ? 'input' : 'inferred';
+            if (data.event === 'pause-intent-cleared') entry.reason = ['play', 'player-playing', 'video-replaced'].includes(data.reason) ? data.reason : 'play';
+            if (data.event === 'recovery-blocked') {
+                entry.reason = ['unavailable', 'user-pause', 'not-live', 'paused'].includes(data.reason) ? data.reason : 'unavailable';
+                state.current.recoveryOutcome = 'blocked-' + entry.reason;
+            }
+            if (data.event === 'reload-start' || data.event === 'recovery-finished') {
+                entry.attempt = Number.isInteger(data.attempt) && data.attempt >= 0 && data.attempt <= 3 ? data.attempt : 0;
+                if (data.event === 'reload-start') entry.hardReload = data.hardReload === true;
+                else {
+                    entry.success = data.success === true;
+                    entry.reason = ['progress', 'timeout', 'unavailable', 'exception', 'cancelled'].includes(data.reason) ? data.reason : 'cancelled';
+                    state.current.recoveryOutcome = entry.success ? 'progress-observed' : entry.reason;
+                }
+            }
+            if (data.playerType !== undefined) {
+                entry.playerType = ['popout', 'embed', 'site', 'mobile_web', 'autoplay'].includes(data.playerType) ? data.playerType : 'unknown';
+            }
+            if (data.quality !== undefined) entry.quality = /^\d{1,5}x\d{1,5}$/.test(data.quality) ? data.quality : 'unknown';
+            if (Number.isFinite(data.durationMs)) entry.durationMs = Math.min(60000, Math.max(0, data.durationMs));
+            if (data.event === 'reload-request') {
+                entry.reason = ['early', 'worker-error', 'normal'].includes(data.reason) ? data.reason : 'normal';
+                state.current.recovery = entry.reason;
+            }
+            if (data.event === 'backup-selected') {
+                state.current.backup = entry.playerType || 'unknown';
+                state.current.quality = entry.quality || 'unknown';
+            }
+            if (data.event === 'ad-start' || data.event === 'ad-end') {
+                state.current.inAdBreak = data.event === 'ad-start';
+                state.current.backup = 'none';
+                state.current.quality = 'unknown';
+            }
+            state.events.push(entry);
+            if (state.events.length > 100) state.events.shift();
+            state.render();
+        } catch {} // Passive diagnostics cannot interrupt playback.
     }
     function initializeTASControls(script, version) {
-        if (window.__tasDiagnostics || !document.body) return;
-        const state = window.__tasDiagnostics = { script, version, startedAt: Date.now(), events: [],
-            current: { backup: 'none', quality: 'unknown', recovery: 'none', inAdBreak: false }, render() {} };
+        if (!document.body) return;
+        const state = getTASDiagnosticState();
+        if (state.controlsReady) return;
+        state.controlsReady = true;
+        state.script = script;
+        state.version = version;
         const host = document.createElement('div');
         host.id = 'tas-controls';
         host.style.cssText = 'position:fixed;right:12px;bottom:12px;z-index:2147483646';
@@ -3526,6 +3639,7 @@
         const timeline = create('details', form);
         timeline.id = 'timeline';
         create('summary', timeline, 'Playback timeline (last 20 events)');
+        create('small', timeline, 'Worker confirmation means hook initialization, not guaranteed filtering. Request outcomes do not prove media playback.');
         const eventList = create('ol', timeline);
         eventList.id = 'event-list';
         const bugReport = create('details', form);
@@ -3560,6 +3674,8 @@
         };
         state.render = () => {
             details.textContent = 'Backup: ' + state.current.backup + ' | Quality: ' + state.current.quality
+                + ' | Worker: ' + (state.current.workerStatus || 'unknown')
+                + ' | Last request: ' + (state.current.lastRequest || 'none')
                 + ' | Last recovery request: ' + state.current.recovery
                 + (state.current.recoveryOutcome ? ' (' + state.current.recoveryOutcome + ')' : '');
             eventList.replaceChildren();
@@ -3585,7 +3701,7 @@
                 else if (event.event === 'pause-play') description = 'Player pause/play requested';
                 else if (event.event === 'worker-error') description = 'Worker error observed';
                 else if (event.event === 'page-refresh') description = 'Page refresh requested';
-                create('li', eventList, seconds + ' — ' + description);
+                create('li', eventList, seconds + ' — ' + (describeTASDiagnostic(event) || description));
             }
         };
         let previousFocus;
@@ -3673,12 +3789,13 @@
                                                     : event.event === 'pause-play' ? 'Player pause/play requested'
                                                         : event.event === 'page-refresh' ? 'Page refresh requested'
                                                             : 'Worker error observed';
-            return seconds + ' — ' + label;
+            return seconds + ' — ' + (describeTASDiagnostic(event) || label);
         };
         const generateBugReport = () => {
             const report = getTASDiagnostics();
             const safeEvents = report.events.slice(-20).map(event => ({
                 atMs: event.atMs, event: event.event, playerType: event.playerType, quality: event.quality,
+                stage: event.stage, outcome: event.outcome, status: event.status, durationMs: event.durationMs,
                 reason: event.reason, attempt: event.attempt, success: event.success, source: event.source
             }));
             const scriptChoice = script + (TAS_INSTALL_METHOD === 'uBlock Origin' ? ' (uBlock Origin)' : ' (userscript)');
@@ -3824,11 +3941,12 @@
         generateReport.addEventListener('click', generateBugReport);
         document.body.appendChild(host);
         try { applyPresentation(); } catch { /* Settings remain accessible without storage. */ }
+        updateTASWorkerDiagnostic();
         state.render();
         window.twitchAdSolutionsTools = { openSettings: show, diagnostics: getTASDiagnostics };
     }
     function onContentLoaded() {
-        initializeTASControls('vaft', '68.5.39');
+        initializeTASControls('vaft', '68.5.41');
         if (document.getElementById('seventv-extension')) {
             console.log('[AD DEBUG] Warning: 7TV extension detected — may cause black screen or buffering issues. If you experience problems, try disabling 7TV.');
         }

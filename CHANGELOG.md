@@ -1,5 +1,17 @@
 ## Unreleased
 
+## v68.5.41 (2026-11-14)
+
+- Add passive worker-interception diagnostics to vaft and video-swap-new: distinguish acknowledged hook initialization, intercepted but unconfirmed workers, inaccessible handles, and possible interception misses. Worker confirmation is not proof that every playlist is filtered.
+- Include sanitized token, master-playlist and media-playlist request outcomes in diagnostics, the timeline and shareable reports. Classify readable HTTP failures, invalid responses, token API errors and transport/body failures; retain existing payloads, exceptions and recovery behavior. No probes or extra network requests are added.
+- Preserve early observations before the controls mount, bound the event history and suppress repeated adjacent outcomes. Synthetic tests cover worker replacement, acknowledgements, request outcomes, timeouts, redaction and report rendering across browser engines. No live Twitch validation is claimed.
+- Preserve the most recently used stream's playlist mappings across long pauses in vaft and video-swap-new, so resuming a media playlist without a fresh master still reaches filtering. Older channels continue to expire after 30 idle minutes; malformed entries are still removed.
+- Evidence classification: synthetic edge case. Fake-clock regressions cover repeated idle cleanup, media-only resume, and abandoned-channel cleanup in all five script formats. No live Twitch reproduction is claimed.
+- Validation: five fake-clock pause/resume regressions fail against 42afe7a with the expected bypass assertion and pass after the fix. Local lint, captured replay, synthetic/unit checks and packaging pass; browser fixtures pass 351 cases with 45 documented Windows WebKit PCM skips. Linux CI exercises the corresponding media fixtures.
+- Versions: vaft 68.5.41 (internal 126), video-swap-new 1.96 (internal 64).
+
+## v68.5.39 (2026-11-01)
+
 - Add a playback timeline in settings showing the newest 20 sanitized local events, distinguishing recovery requests from observed recovery outcomes.
 - Add a ready-to-paste bug report formatted with the repository's GitHub issue-template headings, including the script/version, current playback snapshot and recent allowlisted event details. Unknown browser, extension, console and troubleshooting information is marked for the user to fill in; the report is not sent automatically.
 - Add versioned settings backup export/import for vaft and video-swap-new. Imports are limited to the matching script, validate known settings before writing, roll back on storage errors, and reject files larger than 64 KiB. Invalid saved values prevent creation of an unusable backup.
