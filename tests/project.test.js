@@ -15,13 +15,17 @@ const canonical = node => JSON.stringify(node, function(key, value) {
     return value;
 });
 
-function braveHarness(transport) {
+function braveHarness(transport, { brave = true, navigator: navigatorOverrides } = {}) {
     const timers = new Map();
     let timerId = 0;
     const window = { frameElement: null, fetch: async () => new Response('{"errors":[{"message":"failed integrity check"}]}') };
+    const navigator = Object.assign({ userAgent: 'Chrome/156.0 Windows' }, navigatorOverrides);
+    // Brave exposes navigator.brave even in strict shield modes, so it is the signal the gate and
+    // the spoof layer both treat as canonical. Tests opt out to model Chrome / Firefox.
+    if (brave) navigator.brave = { isBrave: async () => true };
     const context = vm.createContext({
         window, document: { location: new URL('https://www.twitch.tv/channel') },
-        navigator: { userAgent: 'Chrome/156.0 Windows' }, console: { log() {} },
+        navigator, console: { log() {} },
         URL, Request, Response, Headers, DOMException, GM_xmlHttpRequest: transport,
         setTimeout(callback, delay) { timers.set(++timerId, { callback, delay }); return timerId; },
         clearTimeout(id) { timers.delete(id); }
@@ -153,6 +157,35 @@ test('synthetic resilience: Brave still retries a batch rejected entirely by int
     assert.equal(calls.length, 1);
     assert.equal(calls[0].data, body);
 });
+
+for (const file of ['vaft/twitch-brave-fix.user.js', 'vaft/twitch-brave-fix-ublock-origin.js']) {
+    test('synthetic resilience: ' + file + ' installs only when the browser is Brave', () => {
+        const marker = file.includes('ublock') ? 'twitchBraveFixVersion' : 'twitchBraveFixRetryVersion';
+        const load = options => {
+            const fixture = braveHarness(() => { throw new Error('no transport expected'); }, options);
+            const originalFetch = fixture.window.fetch;
+            const logs = [];
+            fixture.context.console = { log: message => logs.push(message) };
+            fixture.load(file);
+            return { markerSet: fixture.window[marker] !== undefined, logs, replaced: fixture.window.fetch !== originalFetch };
+        };
+
+        const chrome = load({ brave: false });
+        assert.equal(chrome.replaced, false, 'must not hook fetch on a non-Brave browser');
+        assert.equal(chrome.markerSet, false, 'a skipped instance must not claim the slot');
+        assert.ok(chrome.logs.some(message => message.includes('not Brave')), 'skip reason must be logged');
+
+        for (const [signal, options] of [
+            ['navigator.brave', { brave: true }],
+            ['userAgentData brand', { brave: false, navigator: { userAgentData: { brands: [{ brand: 'Brave', version: '138' }] } } }],
+            ['user agent string', { brave: false, navigator: { userAgent: 'Mozilla/5.0 Brave/138' } }]
+        ]) {
+            const brave = load(options);
+            assert.equal(brave.replaced, true, 'must hook fetch when Brave is detected via ' + signal);
+            assert.equal(brave.markerSet, true, 'an installed instance must claim the slot');
+        }
+    });
+}
 
 test('synthetic resilience: Brave uBlock diagnostics distinguish ordinary errors from integrity rejection', async () => {
     const fixture = braveHarness(() => { throw new Error('uBlock must not use manager transport'); });
