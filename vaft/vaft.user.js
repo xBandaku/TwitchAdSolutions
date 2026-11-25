@@ -2208,6 +2208,7 @@
         isLive: true,
         lastBackupSwitchAt: 0,
         lastReloadAt: 0,
+        lastReloadChannel: null,
         recoveryReloadUsed: false,
         userPauseIntent: false,
         pauseIntentVideo: null,
@@ -2676,10 +2677,18 @@
                     // window. Without this, such a player stays dead for the whole break: the generic
                     // buffer monitor is gated off in-break and at readyState 0, the ad-backup watch needs
                     // observed playback, and this check needs readyState 3.
+                    // Scope the prior-reload evidence to this channel. lastReloadAt survives a channel
+                    // change: the reset block above is gated on readyState >= 1 and !inAdBreak, so it
+                    // never runs in the wedged state this branch targets, and hasHadData is sticky too.
+                    // Without the channel check, a reload fired on the previous channel would authorise
+                    // reloading a fresh channel's stalled preroll. Cheap checks run first so the URL
+                    // parse only happens on the rare wedged path.
                     const stuckBeforeStart = !playerBufferState.hasHadData
                         && !!playerBufferState.lastReloadAt
                         && video.readyState <= 1
-                        && video.currentTime === 0;
+                        && video.currentTime === 0
+                        && !!playerBufferState.lastReloadChannel
+                        && playerBufferState.lastReloadChannel === getPlaybackChannelName(playerForMonitoringBuffering);
                     if (isStalled && cooldownExpired && !recentReload && (playerBufferState.hasHadData || stuckBeforeStart)) {
                         if (!playerBufferState.adStallStartAt) {
                             playerBufferState.adStallStartAt = Date.now();
@@ -3199,6 +3208,7 @@
                 observedVideo = null;
                 playedVideo = null;
                 playerBufferState.lastReloadAt = Date.now();
+                playerBufferState.lastReloadChannel = getPlaybackChannelName(current) || null;
                 playerBufferState.adStallStartAt = 0;
                 playerBufferState.weJustPaused = Date.now();
                 playerForMonitoringBuffering = null;
