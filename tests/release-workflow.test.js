@@ -108,6 +108,37 @@ test('publishing runs locked dependencies, the full Node suite, browsers and pac
     assert.match(workflow, /if: \$\{\{ inputs\.dry_run \}\}\n\s+uses: actions\/upload-artifact/);
 });
 
+test('only the publish job can write, and it runs no project code', () => {
+    const jobs = workflow.slice(workflow.indexOf('\njobs:\n'));
+    const job = name => {
+        const start = jobs.indexOf('\n  ' + name + ':\n');
+        assert.ok(start >= 0, name + ' job missing');
+        const next = jobs.slice(start + 1).search(/\n  [a-z-]+:\n/);
+        return next < 0 ? jobs.slice(start) : jobs.slice(start, start + 1 + next);
+    };
+    assert.match(workflow.slice(0, workflow.indexOf('\njobs:\n')), /\npermissions:\n  contents: read\n/);
+    assert.equal((workflow.match(/contents: write/g) || []).length, 1);
+    const publish = job('publish');
+    assert.match(publish, /permissions:\n      contents: write\n/);
+    assert.match(publish, /if: \$\{\{ inputs\.dry_run == false \}\}/);
+    assert.doesNotMatch(publish, /\bnpm\b|\bnpx\b|\bnode\b|\bpython3?\b/, 'publish job must not run project code or dependencies');
+    for (const name of ['build', 'publish', 'announce']) {
+        for (const checkout of job(name).split('actions/checkout@').slice(1)) {
+            assert.match(checkout.split('\n    - ')[0], /persist-credentials: false/, name + ' checkout keeps the token');
+        }
+    }
+});
+
+test('every workflow pins actions to a full commit SHA', () => {
+    const directory = path.join(__dirname, '..', '.github/workflows');
+    for (const file of fs.readdirSync(directory).filter(name => /\.ya?ml$/.test(name))) {
+        for (const [, action] of fs.readFileSync(path.join(directory, file), 'utf8').matchAll(/^\s*-?\s*uses:\s*(\S+)/gm)) {
+            if (action.startsWith('./')) continue;
+            assert.match(action, /@[0-9a-f]{40}$/, file + ': ' + action);
+        }
+    }
+});
+
 test('release packaging normalizes line endings and verifies a repeatable bundle', () => {
     const { createHash } = require('node:crypto');
     const { scripts, root } = require('./scripts');

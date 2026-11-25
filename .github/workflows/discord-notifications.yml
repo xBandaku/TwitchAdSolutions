@@ -49,7 +49,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Check out notification script
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Load published release for a manual announcement
         if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
         id: release
