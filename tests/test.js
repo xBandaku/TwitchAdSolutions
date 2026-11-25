@@ -280,6 +280,9 @@ const allAdM3u8 = [
 streamInfo = {
     NumStrippedAdSegments: 0,
     IsStrippingAdSegments: false,
+    // A cache is only ever filled by stripAdSegments, which always stamps RecoverySegmentsAt;
+    // an unstamped cache counts as stale and is never replayed.
+    RecoverySegmentsAt: Date.now(),
     RecoverySegments: [
         { extinf: '#EXTINF:2.000,live', url: 'https://recovery-1.ts' },
         { extinf: '#EXTINF:2.000,live', url: 'https://recovery-2.ts' }

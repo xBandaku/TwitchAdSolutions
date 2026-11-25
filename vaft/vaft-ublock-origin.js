@@ -185,6 +185,7 @@ twitch-videoad.js text/javascript
             RecoverySegments: [],
             RecoveryM3U8: null,
             RecoveryStartSeq: undefined,
+            RecoverySegmentsAt: 0,// When RecoverySegments was last filled; older than RecoveryCacheMaxAgeMs is never replayed
             FreezeStartedAt: 0,
             ConsecutiveAllStrippedPolls: 0,
             TotalAllStrippedPolls: 0,
@@ -948,6 +949,15 @@ twitch-videoad.js text/javascript
     }
     // Remove ad segments from an m3u8 playlist and cache their URLs for replacement
     function stripAdSegments(textStr, stripAllSegments, streamInfo) {
+        // Recovery segments older than this are never replayed: segment URLs expire server-side, and the
+        // cache is only refilled by break polls that still carry a live segment, so a break where every
+        // segment is an ad leaves the previous break's cache in place. A comparable fork logged segments
+        // cached 4.7h earlier answering 403 per segment, player Error #2000, and error-recovery reloads
+        // replaying the same dead segments. 30s mirrors that fork's validated value; AdSegmentCache prunes
+        // at a 120s TTL, the alternative bound if this drops still-valid segments late in a long break.
+        // A cache with no recorded fill time (0) counts as stale: every fill site stamps it, so an
+        // unstamped cache means the age is unknown and must not be served.
+        const RecoveryCacheMaxAgeMs = 30000;
         let hasStrippedAdSegments = false;
         let inCueOut = false;
         const liveSegments = [];
@@ -1076,6 +1086,7 @@ twitch-videoad.js text/javascript
             let first = liveSegments.length - 1;
             while (first > 0 && liveSegments[first].number === liveSegments[first - 1].number + 1) first--;
             streamInfo.RecoverySegments = liveSegments.slice(Math.max(first, liveSegments.length - 6));
+            streamInfo.RecoverySegmentsAt = Date.now();
             const start = streamInfo.RecoverySegments[0];
             const end = streamInfo.RecoverySegments[streamInfo.RecoverySegments.length - 1];
             const seq = Number((textStr.match(/#EXT-X-MEDIA-SEQUENCE:(\d+)/) || [])[1] || 0);
@@ -1117,6 +1128,15 @@ twitch-videoad.js text/javascript
                 console.log('[AD DEBUG] All segments stripped — reusing last clean native playlist (' + snapshotAge + 'ms old)');
                 streamInfo.IsStrippingAdSegments = hasStrippedAdSegments;
                 return streamInfo.LastCleanNativeM3U8;
+            }
+            // Never replay an unbounded cache: the snapshot above is bounded by its 1500ms freshness
+            // check, but this per-segment fallback had no bound and kept replaying an earlier break's
+            // cache hours later (see RecoveryCacheMaxAgeMs).
+            const recoveryAgeMs = Date.now() - (streamInfo.RecoverySegmentsAt || 0);
+            if (streamInfo.RecoverySegments && streamInfo.RecoverySegments.length > 0 && recoveryAgeMs > RecoveryCacheMaxAgeMs) {
+                console.log('[AD DEBUG] Recovery segments are ' + Math.round(recoveryAgeMs / 1000) + 's old — not replaying them (segments that old no longer load)');
+                streamInfo.RecoverySegments = [];
+                streamInfo.RecoveryStartSeq = undefined;
             }
             // Fallback: per-segment recovery cache (existing behavior)
             if (streamInfo.RecoverySegments && streamInfo.RecoverySegments.length > 0) {

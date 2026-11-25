@@ -567,6 +567,9 @@ for (const file of files) {
                 context.EarlyReloadPollThreshold = threshold;
                 const { url, stream } = registerStream(context, {
                     IsShowingAd: true, CsaiOnlyThisBreak: sticky,
+                    // A cache is only ever filled by stripAdSegments, which always stamps
+                    // RecoverySegmentsAt; an unstamped cache counts as stale and is dropped.
+                    RecoverySegmentsAt: cacheSize > 0 ? Date.now() : 0,
                     RecoverySegments: Array.from({ length: cacheSize }, (_, index) => ({
                         extinf: '#EXTINF:2.000,live', url: 'https://fixture.invalid/cached-' + index + '.ts'
                     }))
@@ -579,6 +582,66 @@ for (const file of files) {
                 assert.ok(reloads.every(message => message.kind === 'early'));
             }
         }
+    });
+
+    // The per-segment recovery cache is only refilled while a break still has live segments, so a
+    // cache can survive from an earlier break. Replaying it later hands the player segment URLs that
+    // have since expired server-side: field log from a comparable fork (v110) shows segments cached
+    // 4.7 h earlier answering 403, the player showing Error #2000, and the error-recovery reloads
+    // fetching the same dead segments again. The full-playlist snapshot path is already bounded
+    // (LastCleanNativePlaylistAt <= 1500ms); the per-segment fallback was not.
+    const staleAds = '#EXTM3U\n#EXT-X-DATERANGE:CLASS="twitch-stitched-ad",TYPE="MIDROLL"\n#EXT-X-MEDIA-SEQUENCE:100\n#EXTINF:2.000,ad\nhttps://fixture.invalid/stitched-ad.ts\n';
+    // A partially stripped break poll: stripAdSegments only runs during a break, so this is what
+    // refills the cache. A break where every segment is an ad never refills it at all, which is how
+    // a cache from an earlier break survives to be replayed hours later.
+    const staleMixed = '#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXT-X-DATERANGE:CLASS="twitch-stitched-ad",TYPE="MIDROLL"\n#EXT-X-MEDIA-SEQUENCE:100\n'
+        + '#EXTINF:2.000,ad\nhttps://fixture.invalid/stitched-ad.ts\n'
+        + '#EXTINF:2.000,live\nhttps://fixture.invalid/live.ts\n';
+    const staleCachedSegment = { extinf: '#EXTINF:2.000,live', url: 'https://fixture.invalid/cached-live.ts', number: 0, index: 0 };
+    const staleCachedM3U8 = '#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:100\n#EXTINF:2.000,live\nhttps://fixture.invalid/cached-live.ts\n';
+    const pollAllStripped = async (context, url) => {
+        context.BackupPlayerTypes = [];
+        context.PreferLowQualityBackup = false;
+        context.EarlyReloadPollThreshold = 0;
+        return context.processM3U8(url, staleAds, null);
+    };
+
+    test('synthetic resilience: ' + file + ' records when the recovery segments were cached', async () => {
+        const filling = harness(file);
+        const { url: fillUrl, stream: filledStream } = registerStream(filling.context);
+        filling.context.BackupPlayerTypes = [];
+        filling.context.PreferLowQualityBackup = false;
+        await filling.context.processM3U8(fillUrl, staleMixed, null);
+        assert.ok(filledStream.RecoverySegments.length > 0, 'a partially stripped break poll should cache live segments');
+        assert.ok(filledStream.RecoverySegmentsAt > 0, 'filling the cache must record its age');
+    });
+
+    test('synthetic resilience: ' + file + ' never replays recovery segments older than the cache lifetime', async () => {
+        const fresh = harness(file);
+        const freshSeeded = registerStream(fresh.context, {
+            RecoverySegments: [staleCachedSegment], RecoveryM3U8: staleCachedM3U8, RecoveryStartSeq: 100,
+            RecoverySegmentsAt: Date.now()
+        });
+        const freshPlaylist = await pollAllStripped(fresh.context, freshSeeded.url);
+        assert.ok(freshPlaylist.includes('cached-live.ts'), 'a freshly cached playlist must still be replayed');
+
+        const stale = harness(file);
+        const staleSeeded = registerStream(stale.context, {
+            RecoverySegments: [staleCachedSegment], RecoveryM3U8: staleCachedM3U8, RecoveryStartSeq: 100,
+            RecoverySegmentsAt: Date.now() - 60000
+        });
+        const stalePlaylist = await pollAllStripped(stale.context, staleSeeded.url);
+        assert.ok(!stalePlaylist.includes('cached-live.ts'), 'recovery segments older than 30s must not be replayed');
+        assert.equal(staleSeeded.stream.RecoverySegments.length, 0, 'the stale cache must be dropped');
+
+        // No recorded fill time means the age is unknown; stripAdSegments stamps every fill, so an
+        // unstamped cache cannot be trusted and must not be served.
+        const unstamped = harness(file);
+        const unstampedSeeded = registerStream(unstamped.context, {
+            RecoverySegments: [staleCachedSegment], RecoveryM3U8: staleCachedM3U8, RecoveryStartSeq: 100
+        });
+        const unstampedPlaylist = await pollAllStripped(unstamped.context, unstampedSeeded.url);
+        assert.ok(!unstampedPlaylist.includes('cached-live.ts'), 'an unstamped cache must not be replayed');
     });
 
     test('synthetic resilience: ' + file + ' preserves post-ad actions for backups, stripping and cycle rescue', async () => {
