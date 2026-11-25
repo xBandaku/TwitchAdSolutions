@@ -36,7 +36,7 @@ twitch-videoad.js text/javascript
             return;
         }
     }
-    const ourTwitchAdSolutionsVersion = 65;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 66;// Used to prevent conflicts with outdated versions of the scripts
     const TAS_INSTALL_METHOD = 'uBlock Origin';
     console.log('[AD DEBUG] TwitchAdSolutions video-swap-new v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
@@ -1648,7 +1648,7 @@ twitch-videoad.js text/javascript
     }
     function getTASDiagnosticState() {
         if (typeof window === 'undefined') return null;
-        return window.__tasDiagnostics || (window.__tasDiagnostics = { script: 'video-swap-new', version: '1.97',
+        return window.__tasDiagnostics || (window.__tasDiagnostics = { script: 'video-swap-new', version: '1.98',
             startedAt: Date.now(), events: [], current: { backup: 'none', quality: 'unknown', recovery: 'none', inAdBreak: false }, render() {} });
     }
     function getTASDiagnostics() {
@@ -2121,7 +2121,7 @@ twitch-videoad.js text/javascript
         window.twitchAdSolutionsTools = { openSettings: show, diagnostics: getTASDiagnostics };
     }
     function onContentLoaded() {
-        initializeTASControls('video-swap-new', '1.97');
+        initializeTASControls('video-swap-new', '1.98');
         if (document.getElementById('seventv-extension')) {
             console.log('[AD DEBUG] Warning: 7TV extension detected — may cause black screen or buffering issues. If you experience problems, try disabling 7TV.');
         }
