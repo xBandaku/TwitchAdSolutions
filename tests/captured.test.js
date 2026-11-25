@@ -73,6 +73,42 @@ for (const name of fixtures) {
         });
     }
 
+    for (const file of ['video-swap-new/video-swap-new.user.js', 'video-swap-new/video-swap-new-ublock-origin.js']) {
+        test('captured response: ' + name + ' commits a merged backup master through ' + file, async t => {
+            const errors = [];
+            const serve = (body, url) => {
+                const response = new Response(body, { status: 200, headers: { 'content-type': 'application/vnd.apple.mpegurl' } });
+                Object.defineProperty(response, 'url', { value: url });
+                return response;
+            };
+            const realFetch = async input => {
+                const url = typeof input === 'string' ? input : input.url;
+                // The backup master is the captured master; every variant serves the clean captured media.
+                return url.startsWith('https://usher.ttvnw.net/')
+                    ? serve(capture.master.response.body, capture.master.response.finalUrl)
+                    : serve(capture.media.response.body, capture.media.response.finalUrl);
+            };
+            const context = createScriptContext(readScript(file), {
+                console: { log() {}, error: error => errors.push(error) }, URL, Request, Response, Headers, Blob,
+                AbortController, Uint8Array, atob, setTimeout, clearTimeout, postMessage() {}
+            });
+            context.getAccessToken = async () => new Response(JSON.stringify({
+                data: { streamPlaybackAccessToken: { signature: 'fixture-sig', value: 'fixture-token' } }
+            }), { status: 200 });
+            const master = context.resolvePlaylistUrls(capture.master.response.body, capture.master.response.finalUrl);
+            const streamInfo = context.createStreamInfo('fixture', '');
+            streamInfo.Encodings = master;
+            context.setStreamInfoUrls(streamInfo, master);
+            const [mediaUrl, resolutionInfo] = [...streamInfo.Urls.entries()][0];
+            await context.onFoundAd(streamInfo, '#EXTM3U\n#EXT-X-DATERANGE:CLASS="twitch-stitched-ad"\n', false, realFetch, mediaUrl, resolutionInfo);
+            assert.deepEqual(errors, [], 'backup merge threw');
+            assert.ok(streamInfo.BackupEncodings, 'merged backup master was not committed');
+            const coverage = capture.master.coverage;
+            t.diagnostic('Variant without RESOLUTION in master: ' + (coverage.variants > coverage.withResolution ? 'exercised' : 'NOT EXERCISED')
+                + '; backup token is synthetic, playlists are the sanitized capture.');
+        });
+    }
+
     for (const file of ['vaft/vaft.user.js', 'vaft/vaft-ublock-origin.js']) {
         test('captured response: ' + name + ' loads through ' + file, async t => {
             const context = createScriptContext(readScript(file), {

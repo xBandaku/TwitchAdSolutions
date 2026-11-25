@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Fix video-swap-new's backup merge on masters that list an audio-only variant. The merge looked up every `#EXT-X-STREAM-INF` URL in the main stream's resolution map, but variants without `RESOLUTION` (Twitch's `audio_only`) are never stored there, so `getStreamUrlForResolution` threw on `undefined`. The error was caught and logged, `BackupEncodings` was never set, each later poll spent another player type, and once all failed the break fell back to stripping. The merge now skips variants it has no resolution for. Evidence classification: reproduced from a captured response (both 2026-10-16 popout captures list `audio_only`); no live ad-break playback validation is claimed.
+
 ## v68.5.43 (2026-11-25)
 
 - Stop replaying a stale recovery-segment cache in vaft. The per-segment recovery fallback had no age bound, so a break where every segment was an ad could replay live segments cached by an earlier break. Segment URLs that old answer 403, the player shows Error #2000, and error-recovery reloads replay the same dead segments. The cache now records when it was filled (`RecoverySegmentsAt`) and is dropped instead of replayed once it is older than 30 seconds; a cache with no recorded fill time counts as stale. The 30-second bound comes from a comparable fork's field log of segments cached 4.7 hours earlier; this repository has no capture of its own.
