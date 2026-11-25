@@ -20,13 +20,42 @@ twitch-brave-fix.js text/javascript
         if (_clipHost === 'clips.twitch.tv' || /^\/[^/]+\/clip\/[^/]+/.test(_clipPath)) return;
     }
     'use strict';
-    const ourVersion = 9;
-    console.log('[TwitchBraveFix-uBO] v1.3.5 loading');
+    const ourVersion = 10;
+    console.log('[TwitchBraveFix-uBO] v1.3.6 loading');
     // The userscript can add its retry transport after this diagnostic helper loads.
     if (typeof window.twitchBraveFixVersion !== 'undefined' && window.twitchBraveFixVersion >= ourVersion) {
         console.log('[TwitchBraveFix-uBO] CONFLICT: skipped — another instance already active (v' + window.twitchBraveFixVersion + ')');
         return;
     }
+
+    // Brave-only gate. The spoofs below are meaningless on other engines, but the fetch hook still
+    // costs a URL parse on every request and a response clone+parse on Twitch GQL traffic — and the
+    // release bundle ships this file to everyone. Detection must be synchronous (the hook has to beat
+    // Twitch's bundle, while navigator.brave.isBrave() is async) and must run BEFORE navigator.brave
+    // is hidden below, since that property is the primary signal. Brave does not put "Brave" in its
+    // user agent string, so the UA and brand-list checks only catch builds that expose them; the
+    // reliable signal is navigator.brave, which Brave exposes even in strict shield modes.
+    // If a future Brave build hides every signal, set FORCE_BRAVE_FIX = true to install anyway.
+    const FORCE_BRAVE_FIX = false;
+    const isBraveBrowser = (() => {
+        if (FORCE_BRAVE_FIX) return true;
+        try {
+            if ('brave' in navigator) return true;
+            if (typeof navigator.brave?.isBrave === 'function') return true;
+            if (/Brave/i.test(navigator.userAgent || '')) return true;
+            const brands = navigator.userAgentData && navigator.userAgentData.brands;
+            return Array.isArray(brands) && brands.some(brand => /^Brave$/i.test((brand && brand.brand) || ''));
+        } catch (_e) {
+            // Fail open: an exception here must not silently disable a fix the user installed.
+            return true;
+        }
+    })();
+    if (!isBraveBrowser) {
+        console.log('[TwitchBraveFix-uBO] not Brave — skipping; set FORCE_BRAVE_FIX = true to install anyway');
+        return;
+    }
+
+    // Only mark the slot once the gate has passed, so a skipped instance can be retried.
     window.twitchBraveFixVersion = ourVersion;
 
     // Hide navigator.brave before Twitch's bundle runs so navigator.brave.isBrave() can't
