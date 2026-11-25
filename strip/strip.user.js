@@ -360,7 +360,14 @@
                 if (url.includes('gql')) {
                     if (ForceAccessTokenPlayerType && typeof init?.body === 'string' && init.body.includes('PlaybackAccessToken') && !init.body.includes('picture-by-picture') && !init.body.includes('frontpage')) {
                         let replacedPlayerType = '';
-                        const newBody = JSON.parse(init.body);
+                        let newBody;
+                        try {
+                            newBody = JSON.parse(init.body);
+                        } catch {
+                            // Body mentions PlaybackAccessToken but is not valid JSON; forward it
+                            // untouched instead of throwing out of window.fetch.
+                            return realFetch.apply(this, arguments);
+                        }
                         if (Array.isArray(newBody)) {
                             for (let i = 0; i < newBody.length; i++) {
                                 if (newBody[i]?.variables?.playerType && newBody[i]?.variables?.playerType !== ForceAccessTokenPlayerType) {
@@ -380,7 +387,14 @@
                         }
                     }
                     if (DisableMatureConentPopup && typeof init?.body === 'string') {
-                        const newBody2 = JSON.parse(init.body);
+                        let newBody2;
+                        try {
+                            newBody2 = JSON.parse(init.body);
+                        } catch {
+                            // Not valid JSON; forward the request untouched rather than throwing
+                            // out of window.fetch.
+                            return realFetch.apply(this, arguments);
+                        }
                         if (Array.isArray(newBody2)) {
                             let hasRemovedClassification = false;
                             for (let i = 0; i < newBody2.length; i++) {
