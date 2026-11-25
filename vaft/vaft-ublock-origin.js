@@ -99,7 +99,6 @@ twitch-videoad.js text/javascript
         scope.EarlyReloadPollThreshold = 3;// Number of consecutive all-stripped polls before triggering early reload (each poll ~2s, so 3 = ~6s, 5 = ~10s, 10 = ~20s; 0 = disable). Lowered from 5 to 3 to match the testing variant. Override via localStorage twitchAdSolutions_earlyReloadPollThreshold.
         scope.PinBackupPlayerType = true;// Remember which backup player type worked and try it first on next ad break
         scope.PlayerReloadMinimalRequestsTime = 1500;
-        scope.PlayerReloadMinimalRequestsPlayerIndex = 2;//autoplay
         scope.HasTriggeredPlayerReload = false;
         scope.ActiveStreamInfo = null;
         scope.MasterRequestSequence = 0;
@@ -1524,7 +1523,7 @@ twitch-videoad.js text/javascript
             let isDoingMinimalRequests = false;
             if (streamInfo.LastPlayerReload > Date.now() - PlayerReloadMinimalRequestsTime) {
                 // When doing player reload there are a lot of requests which causes the backup stream to load in slow. Briefly prefer using a single version to prevent long delays
-                startIndex = PlayerReloadMinimalRequestsPlayerIndex;
+                // Probe from the top of playerTypesToTry: after the reorders below, the pinned or fast-autoplay type is first.
                 isDoingMinimalRequests = true;
             }
             // Try pinned backup player type first if available
@@ -1784,7 +1783,9 @@ twitch-videoad.js text/javascript
                     // different ad-laden Source type at the new last position instead — user
                     // gets a Source-tier ad-marked backup (strip+recovery path engages,
                     // freezes likely) instead of the intended 360p clean autoplay backup.
-                    if ((PinBackupPlayerType && backupPlayerType !== 'autoplay') || sourceQualityTypes.includes(backupPlayerType)) {
+                    // A minimal-requests pick can still carry ads; don't pin it or treat it as a recovered Source tier.
+                    const committedClean = !(isDoingMinimalRequests && hasAdTags(backupM3u8));
+                    if (committedClean && ((PinBackupPlayerType && backupPlayerType !== 'autoplay') || sourceQualityTypes.includes(backupPlayerType))) {
                         streamInfo.PinnedBackupPlayerType = backupPlayerType;
                     }
                     console.log(`[AD DEBUG] Blocking${(streamInfo.IsMidroll ? ' midroll ' : ' ')}ads (${backupPlayerType}) — backup found in ${Date.now() - backupSearchStart}ms${backupColdTokenFetches > 0 ? ` (cold cache: ${backupColdTokenFetches} token fetch${backupColdTokenFetches > 1 ? 'es' : ''})` : ' (warm cache)'}`);
@@ -1808,7 +1809,7 @@ twitch-videoad.js text/javascript
                             // Full probe just ran — reset re-probe counter (we just tested Source-tier)
                             streamInfo.FastAutoplayConsecutive = 0;
                         }
-                    } else if (FastAutoplayFirstTry && backupPlayerType !== 'autoplay') {
+                    } else if (FastAutoplayFirstTry && backupPlayerType !== 'autoplay' && committedClean) {
                         // Source-tier type committed cleanly — channel recovered. Reset the
                         // SSAI-uniform signal so next break does normal iteration. Also reset
                         // the re-probe counter since we just got a Source-tier win.

@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Probe vaft's pinned backup first right after a reload. Within 1.5 seconds of a player reload, the backup search ran a single probe starting at index 2 (`PlayerReloadMinimalRequestsPlayerIndex`, once `autoplay`). That index was applied after the list was reordered to put the pinned or fast-autoplay type first, so it skipped the known-good types and committed whatever sat third (now `mobile_web`), ads included, then pinned it. The probe now starts at the top of the reordered list, and a pick made by this single-probe path that still carries ads is neither pinned nor treated as a recovered Source tier. The unused `PlayerReloadMinimalRequestsPlayerIndex` option is removed. Evidence classification: synthetic edge case (code trace plus a synthetic test); no live playback validation is claimed.
+
 ## v68.5.43 (2026-11-25)
 
 - Stop replaying a stale recovery-segment cache in vaft. The per-segment recovery fallback had no age bound, so a break where every segment was an ad could replay live segments cached by an earlier break. Segment URLs that old answer 403, the player shows Error #2000, and error-recovery reloads replay the same dead segments. The cache now records when it was filled (`RecoverySegmentsAt`) and is dropped instead of replayed once it is older than 30 seconds; a cache with no recorded fill time counts as stale. The 30-second bound comes from a comparable fork's field log of segments cached 4.7 hours earlier; this repository has no capture of its own.
