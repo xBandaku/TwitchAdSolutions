@@ -1,7 +1,12 @@
 ## Unreleased
 
+## v68.5.44 (2026-11-25)
+
 - Fix video-swap-new's backup merge on masters that list an audio-only variant. The merge looked up every `#EXT-X-STREAM-INF` URL in the main stream's resolution map, but variants without `RESOLUTION` (Twitch's `audio_only`) are never stored there, so `getStreamUrlForResolution` threw on `undefined`. The error was caught and logged, `BackupEncodings` was never set, each later poll spent another player type, and once all failed the break fell back to stripping. The merge now skips variants it has no resolution for. Evidence classification: reproduced from a captured response (both 2026-10-16 popout captures list `audio_only`); no live ad-break playback validation is claimed.
 - Probe vaft's pinned backup first right after a reload. Within 1.5 seconds of a player reload, the backup search ran a single probe starting at index 2 (`PlayerReloadMinimalRequestsPlayerIndex`, once `autoplay`). That index was applied after the list was reordered to put the pinned or fast-autoplay type first, so it skipped the known-good types and committed whatever sat third (now `mobile_web`), ads included, then pinned it. The probe now starts at the top of the reordered list, and a pick made by this single-probe path that still carries ads is neither pinned nor treated as a recovered Source tier. The unused `PlayerReloadMinimalRequestsPlayerIndex` option is removed. Evidence classification: synthetic edge case (code trace plus a synthetic test); no live playback validation is claimed.
+- Tests: each userscript/uBlock pair must now match statement for statement at the top level, not only in function declarations, and vaft and video-swap-new must report one version in `@version`, diagnostics and the settings panel. The new check synced one drifted log message in `vaft-ublock-origin.js`.
+- Validation: the new regressions (video-swap-new backup merge against both captures, vaft post-reload probe in both formats, uBlock sync) fail against the v68.5.43 scripts and pass after the change. Lint, the Node suite, browser fixtures and release-tests pass in CI.
+- Versions: vaft 68.5.44 (internal 129), video-swap-new 1.98 (internal 66). Other script versions are unchanged.
 
 ## v68.5.43 (2026-11-25)
 
