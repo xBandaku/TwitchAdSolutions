@@ -370,6 +370,45 @@ for (const pair of [
     });
 }
 
+for (const pair of [
+    ['vaft/vaft.user.js', 'vaft/vaft-ublock-origin.js'],
+    ['video-swap-new/video-swap-new.user.js', 'video-swap-new/video-swap-new-ublock-origin.js']
+]) {
+    test(pair[0] + ' matches its uBlock copy statement for statement', () => {
+        // Covers top-level code (settings parsing, hook installation) that the
+        // function-declaration comparison above does not see. Allowed differences:
+        // uBlock's hostname guard, the install-method label and the no-op 'use strict'.
+        const statements = file => {
+            const source = readScript(file);
+            return acorn.parse(source, { ecmaVersion: 2022 }).body[0].expression.callee.body.body.filter(node =>
+                !(node.type === 'ExpressionStatement' && node.expression.value === 'use strict')
+                && !(node.type === 'IfStatement' && source.slice(node.start, node.end).includes('.test(document.location.hostname) === false')));
+        };
+        const normalize = node => JSON.parse(canonical(node), function(key, value) {
+            return this.type === 'VariableDeclarator' && this.id?.name === 'TAS_INSTALL_METHOD' && key === 'init' ? null : value;
+        });
+        const [left, right] = pair.map(statements);
+        assert.equal(left.length, right.length, 'top-level statement count differs');
+        left.forEach((node, index) => assert.deepEqual(normalize(node), normalize(right[index]), pair[1] + ' differs at top-level statement ' + index));
+    });
+}
+
+for (const [script, files] of [
+    ['vaft', ['vaft/vaft.user.js', 'vaft/vaft-violentmonkey.user.js', 'vaft/vaft-ublock-origin.js']],
+    ['video-swap-new', ['video-swap-new/video-swap-new.user.js', 'video-swap-new/video-swap-new-ublock-origin.js']]
+]) {
+    test(script + ' reports one version everywhere', () => {
+        const expected = /^\/\/ @version\s+(\S+)/m.exec(readScript(files[0]))[1];
+        for (const file of files.filter(file => fs.existsSync(path.join(root, file)))) {
+            const source = readScript(file);
+            const header = /^\/\/ @version\s+(\S+)/m.exec(source);
+            if (header) assert.equal(header[1], expected, file + ' @version');
+            assert.equal(/script: '[^']+', version: '([^']+)'/.exec(source)?.[1], expected, file + ' diagnostics version');
+            assert.equal(new RegExp("initializeTASControls\\('" + script + "', '([^']+)'\\)").exec(source)?.[1], expected, file + ' settings panel version');
+        }
+    });
+}
+
 test('Violentmonkey test install matches vaft runtime', () => {
     const normalizeInstallMetadata = source => source
         .replace(/^\/\/ @(?:name|updateURL|downloadURL)[^\r\n]*\r?\n/gm, '')
