@@ -194,6 +194,52 @@ for (const file of files) {
         assert.equal(h.context.playerBufferState.userPauseIntent, false);
     });
 
+    test('synthetic resilience: ' + file + ' records the channel with each reload so evidence cannot leak across channels', () => {
+        const h = monitorHarness(file);
+        h.context.playerBufferState.inAdBreak = true;
+        h.context.isActivelyStrippingAds = true;
+        h.context.doTwitchPlayerTask(false, true, 'early');
+        assert.equal(h.reloads.length, 1, 'hard reload should have been requested');
+        assert.equal(h.context.playerBufferState.lastReloadChannel, 'fixture', 'reload must stamp the channel it happened on');
+        assert.ok(h.context.playerBufferState.lastReloadAt > 0, 'reload must still stamp the time');
+        h.context.doTwitchPlayerTask.recovery.cancel();
+    });
+
+    test('synthetic resilience: ' + file + ' reloads a player that never restarted after a reload mid-break', () => {
+        // Field capture (vaft 68.5.42): during an ad break the <video> element had never loaded
+        // data — readyState 0, networkState 0, currentTime 0, paused — while the logical player
+        // reported not-paused, 60s after a reload whose recovery outcome was 'timeout'. All three
+        // watchdogs skipped it: the generic buffer monitor is gated off in-break and at readyState 0,
+        // the ad-backup watch needs observed playback, and the loading-circle check needs hasHadData.
+        const scenarios = [
+            { name: 'fresh page load with no reload attempt must not reload', lastReloadAgoMs: 0, lastReloadChannel: null, expected: 0 },
+            { name: 'a reload inside the init window must not reload again', lastReloadAgoMs: 5000, lastReloadChannel: 'fixture', expected: 0 },
+            { name: 'no data 60s after a reload on this channel must reload', lastReloadAgoMs: 60000, lastReloadChannel: 'fixture', expected: 1 },
+            // lastReloadAt survives an SPA channel change (the reset block is gated on readyState >= 1
+            // and !inAdBreak), so a reload from the previous channel must not authorise this one.
+            { name: 'no data after a reload on the previous channel must not reload', lastReloadAgoMs: 60000, lastReloadChannel: 'previous-channel', expected: 0 },
+            { name: 'a reload with no recorded channel must not reload', lastReloadAgoMs: 60000, lastReloadChannel: null, expected: 0 }
+        ];
+        for (const scenario of scenarios) {
+            const h = monitorHarness(file);
+            const video = h.current.player.video;
+            Object.assign(video, { readyState: 0, networkState: 0, currentTime: 0, paused: true });
+            h.current.player.isPaused = () => false;
+            h.current.player.core.paused = false;
+            Object.assign(h.context.playerBufferState, {
+                inAdBreak: true, hasHadData: false, adStallStartAt: 0, lastAdStallReloadAt: 0,
+                lastReloadAt: scenario.lastReloadAgoMs ? h.context.Date.now() - scenario.lastReloadAgoMs : 0,
+                lastReloadChannel: scenario.lastReloadChannel
+            });
+            h.context.isActivelyStrippingAds = true;
+            for (let tick = 0; tick < 8 && h.reloads.length < Math.max(scenario.expected, 1); tick++) {
+                h.context.monitorPlayerBuffering();
+                h.advance(1000);
+            }
+            assert.equal(h.reloads.length, scenario.expected, scenario.name);
+        }
+    });
+
     test('synthetic resilience: ' + file + ' opt-in page fallback waits for both failures and another stalled window', () => {
         const h = recoveryHarness(file);
         h.storage.set('twitchAdSolutions_pageRefreshFallback', 'true');

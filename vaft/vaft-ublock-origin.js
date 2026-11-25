@@ -2144,6 +2144,7 @@ twitch-videoad.js text/javascript
         isLive: true,
         lastBackupSwitchAt: 0,
         lastReloadAt: 0,
+        lastReloadChannel: null,
         recoveryReloadUsed: false,
         userPauseIntent: false,
         pauseIntentVideo: null,
@@ -2155,6 +2156,9 @@ twitch-videoad.js text/javascript
         loggedPauseIntent: false,
         weJustPaused: 0,
         inAdBreak: false,
+        hasHadData: false,
+        adStallStartAt: 0,
+        lastAdStallReloadAt: 0,
         vaftEverUnmuted: false,
         adPlaybackWatch: null,
         gapJumpLastPosition: -1,
@@ -2600,11 +2604,32 @@ twitch-videoad.js text/javascript
                     // is the expected transient state during a reload's MediaSource teardown. Without
                     // this, an early-reload in flight can trigger a redundant loading-circle reload.
                     const recentReload = playerBufferState.lastReloadAt && (Date.now() - playerBufferState.lastReloadAt) < stallReloadCooldown;
-                    if (isStalled && cooldownExpired && !recentReload && playerBufferState.hasHadData) {
+                    // A player that never reached readyState 3 (hasHadData false) is normally a fresh page
+                    // load or preroll init and must not be reloaded — that is the PR #96 misfire guarded
+                    // above. But if a reload already fired and the element STILL has no data and has not
+                    // advanced, it is a wedged MediaSource rather than init: the reload tore the player
+                    // down and nothing rebuilt it. Requiring a prior reload attempt (lastReloadAt) keeps
+                    // fresh loads out of this branch, and !recentReload still grants the post-reload init
+                    // window. Without this, such a player stays dead for the whole break: the generic
+                    // buffer monitor is gated off in-break and at readyState 0, the ad-backup watch needs
+                    // observed playback, and this check needs readyState 3.
+                    // Scope the prior-reload evidence to this channel. lastReloadAt survives a channel
+                    // change: the reset block above is gated on readyState >= 1 and !inAdBreak, so it
+                    // never runs in the wedged state this branch targets, and hasHadData is sticky too.
+                    // Without the channel check, a reload fired on the previous channel would authorise
+                    // reloading a fresh channel's stalled preroll. Cheap checks run first so the URL
+                    // parse only happens on the rare wedged path.
+                    const stuckBeforeStart = !playerBufferState.hasHadData
+                        && !!playerBufferState.lastReloadAt
+                        && video.readyState <= 1
+                        && video.currentTime === 0
+                        && !!playerBufferState.lastReloadChannel
+                        && playerBufferState.lastReloadChannel === getPlaybackChannelName(playerForMonitoringBuffering);
+                    if (isStalled && cooldownExpired && !recentReload && (playerBufferState.hasHadData || stuckBeforeStart)) {
                         if (!playerBufferState.adStallStartAt) {
                             playerBufferState.adStallStartAt = Date.now();
                         } else if ((Date.now() - playerBufferState.adStallStartAt) > 3000) {
-                            console.log('[AD DEBUG] Loading circle detected during ad break (' + ((Date.now() - playerBufferState.adStallStartAt) / 1000).toFixed(1) + 's stall, readyState=' + video.readyState + ') — early reload');
+                            console.log('[AD DEBUG] ' + (playerBufferState.hasHadData ? 'Loading circle' : 'Player never restarted after reload') + ' detected during ad break (' + ((Date.now() - playerBufferState.adStallStartAt) / 1000).toFixed(1) + 's stall, readyState=' + video.readyState + ', currentTime=' + video.currentTime.toFixed(1) + ') — early reload');
                             playerBufferState.lastAdStallReloadAt = Date.now();
                             playerBufferState.adStallStartAt = 0;
                             // Hard reload: a stuck media player needs its MediaSource rebuilt, not just an m3u8 refetch.
@@ -3119,6 +3144,7 @@ twitch-videoad.js text/javascript
                 observedVideo = null;
                 playedVideo = null;
                 playerBufferState.lastReloadAt = Date.now();
+                playerBufferState.lastReloadChannel = getPlaybackChannelName(current) || null;
                 playerBufferState.adStallStartAt = 0;
                 playerBufferState.weJustPaused = Date.now();
                 playerForMonitoringBuffering = null;
