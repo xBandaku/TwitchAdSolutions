@@ -566,7 +566,10 @@
                                         for (let j = 0; j < normalLines.length - 1; j++) {
                                             if (normalLines[j].startsWith('#EXT-X-STREAM-INF')) {
                                                 const resSettings = parseAttributes(normalLines[j].substring(normalLines[j].indexOf(':') + 1));
-                                                const lowResUrl = getStreamUrlForResolution(encodingsM3u8, streamInfo.Urls.get(normalLines[j + 1].trimEnd()));
+                                                const mainResolutionInfo = streamInfo.Urls.get(normalLines[j + 1].trimEnd());
+                                                // Variants without RESOLUTION (audio_only) aren't in Urls and have nothing to merge.
+                                                if (!mainResolutionInfo) continue;
+                                                const lowResUrl = getStreamUrlForResolution(encodingsM3u8, mainResolutionInfo);
                                                 const lowResInf = encodingsM3u8.match(new RegExp(`^.*(?=\n.*${lowResUrl})`, 'm'))?.[0];
                                                 if (!lowResInf) continue;
                                                 const lowResSettings = parseAttributes(lowResInf.substring(lowResInf.indexOf(':') + 1));
