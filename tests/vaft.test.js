@@ -1122,6 +1122,37 @@ for (const file of files) {
         assert.ok(tokens > 2);
     });
 
+    test('synthetic resilience: ' + file + ' probes the pinned backup first right after a reload and never pins an ad-laden pick', async () => {
+        const marked = clean.replace('#EXT-X-TARGETDURATION', '#EXT-X-DATERANGE:CLASS="twitch-trigger"\n#EXT-X-TARGETDURATION');
+        for (const [pinned, cleanTypes, expectedType, expectedPin] of [
+            ['popout', ['popout'], 'popout', 'popout'],
+            [null, [], 'site', null]
+        ]) {
+            const tokens = [];
+            const { context } = harness(file);
+            const { url, stream } = registerStream(context, {
+                IsShowingAd: true, HasConfirmedAdAttrs: true, PinnedBackupPlayerType: pinned, LastPlayerReload: Date.now()
+            });
+            context.getAccessToken = async (channel, type) => {
+                tokens.push(type);
+                return new Response(JSON.stringify({ data: { streamPlaybackAccessToken: { signature: 'fixture', value: type } } }));
+            };
+            const realFetch = async input => {
+                const requestUrl = new URL(String(input));
+                if (requestUrl.hostname === 'usher.ttvnw.net') {
+                    const type = requestUrl.searchParams.get('token');
+                    return new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=1920x1080,FRAME-RATE=60,CODECS="avc1.4d4028"\nhttps://fixture.invalid/' + type + '.m3u8\n');
+                }
+                const type = requestUrl.pathname.slice(1, -'.m3u8'.length);
+                return new Response(cleanTypes.includes(type) ? clean : marked);
+            };
+            await context.processM3U8(url, marked, realFetch);
+            assert.equal(tokens[0], pinned || 'site', 'first probe after a reload');
+            assert.equal(stream.ActiveBackupPlayerType, expectedType);
+            assert.equal(stream.PinnedBackupPlayerType, expectedPin);
+        }
+    });
+
     test('synthetic resilience: ' + file + ' processes query, v2 and relative media URLs from master playlists', async () => {
         for (const uri of ['https://fixture.invalid/index.m3u8?token=fixture', 'https://fixture.invalid/v1/chunked/stream', '../fixture/chunked?token=fixture']) {
             const masterUrl = 'https://usher.ttvnw.net/api/v2/channel/hls/fixture.m3u8?token=fixture';
