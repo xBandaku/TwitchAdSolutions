@@ -3,9 +3,6 @@
     "no-empty": {
       "count": 1
     },
-    "no-undef": {
-      "count": 1
-    },
     "no-useless-escape": {
       "count": 1
     }
@@ -56,9 +53,6 @@
     "no-empty": {
       "count": 1
     },
-    "no-undef": {
-      "count": 1
-    },
     "no-useless-assignment": {
       "count": 2
     },
@@ -68,9 +62,6 @@
   },
   "video-swap-new/video-swap-new.user.js": {
     "no-empty": {
-      "count": 1
-    },
-    "no-undef": {
       "count": 1
     },
     "no-useless-assignment": {
