@@ -2116,7 +2116,7 @@
         let headers = {
             'Client-ID': ClientID,
             'X-Device-Id': GQLDeviceID,
-            'Authorization': AuthorizationHeader,
+            ...(typeof AuthorizationHeader === 'string' && AuthorizationHeader ? {'Authorization': AuthorizationHeader} : {}),
             ...(ClientIntegrityHeader && {'Client-Integrity': ClientIntegrityHeader}),
             ...(ClientVersion && {'Client-Version': ClientVersion}),
             ...(ClientSession && {'Client-Session-Id': ClientSession})
@@ -3357,7 +3357,15 @@
                     }
                     if (ForceAccessTokenPlayerType && typeof init?.body === 'string' && init.body.includes('PlaybackAccessToken')) {
                         let replacedPlayerType = '';
-                        const newBody = JSON.parse(init.body);
+                        let newBody;
+                        try {
+                            newBody = JSON.parse(init.body);
+                        } catch {
+                            // The body merely mentions PlaybackAccessToken but is not valid JSON
+                            // (for example, truncated mid-write). Forward it untouched instead of
+                            // throwing out of window.fetch and failing the caller's request.
+                            return realFetch.apply(this, arguments);
+                        }
                         if (Array.isArray(newBody)) {
                             for (let i = 0; i < newBody.length; i++) {
                                 if (newBody[i]?.operationName?.includes('PlaybackAccessToken') && newBody[i]?.variables?.playerType && newBody[i]?.variables?.playerType !== ForceAccessTokenPlayerType) {

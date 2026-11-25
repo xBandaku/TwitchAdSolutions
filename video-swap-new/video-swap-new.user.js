@@ -491,15 +491,15 @@
                 playerTypes.unshift(streamInfo.PinnedBackupPlayerType);
             }
         }
-        if (streamInfo.BackupEncodingsStatus.size >= playerTypes.length) {
-            return textStr;
-        }
         if (streamInfo.BackupEncodings && !streamInfo.BackupEncodings.includes(url)) {
             const streamM3u8Url = getStreamUrlForResolution(streamInfo.BackupEncodings, resolutionInfo);
             const streamM3u8Response = await observeTASFetch('media', realFetch, streamM3u8Url);
             if (streamM3u8Response.status === 200) {
                 return await readTASPlaylist(streamM3u8Response, 'media');
             }
+        }
+        if (streamInfo.BackupEncodingsStatus.size >= playerTypes.length) {
+            return textStr;
         }
         const backupSearchStart = Date.now();
         let backupPlayerTypeInfo = '';
@@ -1189,9 +1189,9 @@
                 }
             }
         };
-        return gqlRequest(body);
+        return gqlRequest(body, playerType !== realPlayerType);
     }
-    function gqlRequest(body) {
+    function gqlRequest(body, anonymousRequest = false) {
         if (!gql_device_id) {
             gql_device_id = '';
             const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
@@ -1202,10 +1202,10 @@
         let headers = {
             'Client-Id': CLIENT_ID,
             'X-Device-Id': gql_device_id,
-            'Authorization': AuthorizationHeader,
+            ...(typeof AuthorizationHeader === 'string' && AuthorizationHeader ? {'Authorization': AuthorizationHeader} : {}),
             ...(ClientIntegrityHeader && {'Client-Integrity': ClientIntegrityHeader})
         };
-        if (playerType.includes('-ALT')) {
+        if (anonymousRequest) {
             headers = {
                 'Client-Id': CLIENT_ID,
                 'X-Device-Id': gql_device_id

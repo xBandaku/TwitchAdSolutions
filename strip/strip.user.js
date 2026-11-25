@@ -27,7 +27,6 @@
         scope.ForceAccessTokenPlayerType = 'site';
         scope.DisableMatureConentPopup = false;// If true this avoids having to log in to watch age gated content
         scope.AdSegmentCache = new Map();
-        scope.AllSegmentsAreAdSegments = false;
         scope.NumStrippedSegments = 0;
         scope.M3U8Whitelist = new Set();
         scope.M3U8ChannelCache = new Map();
@@ -128,12 +127,6 @@
                     ${replaceServerTimeInM3u8.toString()}
                     const workerString = getWasmWorkerJs('${twitchBlobUrl.replaceAll("'", "%27")}');
                     declareOptions(self);
-                    self.addEventListener('message', function(e) {
-                        if (e.data.key == 'AllSegmentsAreAdSegments') {
-                            AllSegmentsAreAdSegments = !AllSegmentsAreAdSegments;
-                            console.log('AllSegmentsAreAdSegments: ' + AllSegmentsAreAdSegments);
-                        }
-                    });
                     hookWorkerFetch();
                     eval(workerString);
                 `;
@@ -310,7 +303,7 @@
             // Remove tracking urls which appear in the overlay UI
             lines[i] = line
                 .replaceAll(/(X-TV-TWITCH-AD(?:-[A-Z]+)*-URLS?=")[^"]*(")/g, `$1${newAdUrl}$2`);
-            if (i < lines.length - 1 && line.startsWith('#EXTINF') && (!line.includes(',live') || stripAllSegments || AllSegmentsAreAdSegments)) {
+            if (i < lines.length - 1 && line.startsWith('#EXTINF') && (!line.includes(',live') || stripAllSegments)) {
                 const segmentUrl = lines[i + 1];
                 if (!AdSegmentCache.has(segmentUrl)) {
                     NumStrippedSegments++;
@@ -560,9 +553,6 @@
         }
     }
     window.reloadTwitchPlayer = reloadTwitchPlayer;
-    window.allSegmentsAreAdSegments = () => {
-        postTwitchWorkerMessage('AllSegmentsAreAdSegments');
-    };
     declareOptions(window);
     try {
         const lsPlayerType = localStorage.getItem('twitchAdSolutions_playerType');
