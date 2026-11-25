@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TwitchAdSolutions (vaft - Violentmonkey test)
 // @namespace    https://github.com/ryanbr/TwitchAdSolutions
-// @version      68.5.41
+// @version      68.5.42
 // @description  Multiple solutions for blocking Twitch ads (vaft)
 // @updateURL    https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft.user.js
 // @downloadURL  https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft.user.js
@@ -48,7 +48,7 @@
         }
     }
     'use strict';
-    const ourTwitchAdSolutionsVersion = 126;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 127;// Used to prevent conflicts with outdated versions of the scripts
     const TAS_INSTALL_METHOD = 'Violentmonkey';
     console.log('[AD DEBUG] TwitchAdSolutions vaft v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
@@ -3461,7 +3461,7 @@
     }
     function getTASDiagnosticState() {
         if (typeof window === 'undefined') return null;
-        return window.__tasDiagnostics || (window.__tasDiagnostics = { script: 'vaft', version: '68.5.41',
+        return window.__tasDiagnostics || (window.__tasDiagnostics = { script: 'vaft', version: '68.5.42',
             startedAt: Date.now(), events: [], current: { backup: 'none', quality: 'unknown', recovery: 'none', inAdBreak: false }, render() {} });
     }
     function getTASDiagnostics() {
@@ -3954,7 +3954,7 @@
         window.twitchAdSolutionsTools = { openSettings: show, diagnostics: getTASDiagnostics };
     }
     function onContentLoaded() {
-        initializeTASControls('vaft', '68.5.41');
+        initializeTASControls('vaft', '68.5.42');
         if (document.getElementById('seventv-extension')) {
             console.log('[AD DEBUG] Warning: 7TV extension detected — may cause black screen or buffering issues. If you experience problems, try disabling 7TV.');
         }
