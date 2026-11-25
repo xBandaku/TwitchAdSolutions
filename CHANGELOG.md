@@ -5,6 +5,8 @@
 - Omit the Authorization header rather than sending the literal string "undefined" when no token has been captured. Applied to vaft, video-swap-new, and their uBlock Origin and Violentmonkey formats.
 - Guard the PlaybackAccessToken body parse in vaft's fetch hook: a body that merely mentions the operation name but is not valid JSON is forwarded untouched instead of throwing out of window.fetch and failing the caller's request.
 - Remove the unreachable allSegmentsAreAdSegments toggle from strip, which called an undefined postTwitchWorkerMessage.
+- Guard the PlaybackAccessToken body parse in video-swap-new (both formats) and both gql body parses in strip (player-type rewrite and mature-content classification): a body that is not valid JSON is forwarded untouched instead of throwing out of window.fetch and failing the caller's request.
+- Evidence classification: synthetic. Each parse site was reproduced against pre-fix source reconstructed in memory from the same file; pre-fix throws SyntaxError without reaching the real fetch, post-fix forwards the body byte-identical. Valid single and batch bodies still rewrite identically. No live Twitch validation is claimed.
 - Evidence classification: synthetic. Each regression was reproduced against pre-fix source reconstructed in memory from the same files; no live Twitch playback validation is claimed.
 - Validation: ESLint with the suppressions baseline disabled reports the same pre-existing findings before and after. Node suite 327/328; the single failure is the packaging test that requires a real Python interpreter, and this host exposes only the Windows Store alias. No version bump is included.
 
