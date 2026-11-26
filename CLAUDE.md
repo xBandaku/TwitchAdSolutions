@@ -87,10 +87,9 @@ Functions serialized with `.toString()` into the worker blob cannot reference ou
 - Release is `workflow_dispatch` on `release.yml` with `dry_run` defaulting to true. Jobs: `build` (read-only, runs all checks), `publish` (write, skipped on dry run), `announce`; actions pinned to commit SHAs. It reads the version from `vaft/vaft.user.js` (`x.y.z` only) and notes from the matching or `Unreleased` CHANGELOG section.
 - Twitch's player reacts badly to mixed m3u8 sources (freezes, repeats, desync); many recovery paths exist only to undo that. Change timing constants with care.
 
-## Current state (2026-11-25)
+## Current state (2026-11-26)
 
-- Unreleased on master once merged: vaft 68.5.46 adds `[AD DEBUG]` console lines to the bug report and diagnostics export.
-- Latest release v68.5.45 (PR 72): vaft ports from the Helli24 fork. Previous: v68.5.44 (PRs 65-69) sync guard tests, video-swap-new audio-only backup merge fix, vaft post-reload pinned-backup probe fix.
+- Latest release v68.5.46 (PR 73): vaft adds `[AD DEBUG]` console lines, redacted, to the bug report and diagnostics export. Previous: v68.5.45 (PR 72) vaft ports from the Helli24 fork; v68.5.44 (PRs 65-69) sync guard tests, video-swap-new audio-only backup merge fix, vaft post-reload pinned-backup probe fix.
 - PR #70 merged after v68.5.44: release workflow split into read-only `build` and write-only `publish` jobs, actions pinned to commit SHAs.- Open PR #57: Dependabot bump of @playwright/test 1.64.1 -> 1.65.1.
 - Decided: keep `@updateURL`/`@downloadURL` and README install links on `raw/master`, not release asset links.
 - Suggested, not done: branch protection "include administrators" (owner's setting).
