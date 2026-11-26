@@ -338,9 +338,7 @@ for (const script of scripts) {
                     || url.pathname.startsWith('/xBandaku/TwitchAdSolutions/master/'),
                 key + ' must track the master branch'
             );
-            const expectedPath = script.file === 'vaft/vaft-violentmonkey.user.js'
-                ? '/vaft/vaft.user.js'
-                : '/' + script.file;
+            const expectedPath = '/' + script.file;
             assert.ok(url.pathname.endsWith(expectedPath));
         }
     });
@@ -394,7 +392,7 @@ for (const pair of [
 }
 
 for (const [script, files] of [
-    ['vaft', ['vaft/vaft.user.js', 'vaft/vaft-violentmonkey.user.js', 'vaft/vaft-ublock-origin.js']],
+    ['vaft', ['vaft/vaft.user.js', 'vaft/vaft-ublock-origin.js']],
     ['video-swap-new', ['video-swap-new/video-swap-new.user.js', 'video-swap-new/video-swap-new-ublock-origin.js']]
 ]) {
     test(script + ' reports one version everywhere', () => {
@@ -409,11 +407,3 @@ for (const [script, files] of [
     });
 }
 
-test('Violentmonkey test install matches vaft runtime', () => {
-    const normalizeInstallMetadata = source => source
-        .replace(/^\/\/ @(?:name|updateURL|downloadURL)[^\r\n]*\r?\n/gm, '')
-        .replace(/const TAS_INSTALL_METHOD = '[^']+';/, 'const TAS_INSTALL_METHOD = "INSTALL_METHOD";');
-    const standard = normalizeInstallMetadata(readScript('vaft/vaft.user.js'));
-    const violentmonkey = normalizeInstallMetadata(readScript('vaft/vaft-violentmonkey.user.js'));
-    assert.equal(violentmonkey, standard);
-});

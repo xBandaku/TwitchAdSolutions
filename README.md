@@ -60,6 +60,9 @@ To uninstall, remove the filter and this resource URL. Set `userResourcesLocatio
 | --- | --- | --- |
 | vaft (recommended) | [Install](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/master/vaft/vaft.user.js) | [Resource](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/master/vaft/vaft-ublock-origin.js) |
 | video-swap-new | [Install](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/master/video-swap-new/video-swap-new.user.js) | [Resource](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/master/video-swap-new/video-swap-new-ublock-origin.js) |
+| twitch-brave-fix (Brave only, add alongside vaft or video-swap-new) | [Install](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/master/vaft/twitch-brave-fix.user.js) | [Resource](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/master/vaft/twitch-brave-fix-ublock-origin.js) |
+
+The Brave helper works around Brave fingerprint detection on Twitch requests and skips installation on other browsers. Its uBlock Origin version covers only the JavaScript spoofs; retrying rejected requests with rewritten headers needs the userscript.
 
 ## Configuration
 
@@ -109,6 +112,13 @@ localStorage.removeItem('twitchAdSolutions_hideAdOverlay');
 | `disableReloadCap` | Unset; vaft only | Set to `true` to allow repeated buffer-monitor reloads. This can cause reload loops. |
 | `preferLowQualityBackup` | `true`; vaft only | Allow the 360p autoplay fallback, including recovery from stalled ad stripping. Set to `false` to disable both. |
 | `backupSwapFirst` | `true`; vaft only | Try backup streams first. Set to `false` to strip ad segments first. |
+| `earlyReloadPollThreshold` | vaft: `3`; video-swap-new: `5` | Polls (about 2 seconds each) of fully stripped playback before an early reload. Set to `0` to disable. |
+| `driftCorrectionRate` | `1.1`; vaft only | Playback rate used to catch up to live after a reload. Set to `0` to disable. |
+| `fastAutoplayFirstTry` | `true`; vaft only | Try the 360p autoplay backup first when the previous break ended on it. Set to `false` to probe Source-quality backups every break. |
+| `recoverFromSilentMute` | `true`; vaft only | Unmute after a reload if you had unmuted earlier in the session. Set to `false` to keep a mute across reloads. |
+| `disableAdSpoofing` | `true`; vaft only | Ad-tracking beacons are not sent. Set to `false` to send them. |
+| `disablePostBreakWedge` | Unset; vaft only | Set to `true` to turn off recovery for frozen video with running audio after a break. |
+| `iosSoftReload` | `true`; vaft only | On Apple touch devices, keep the existing player when reloading. Set to `false` to replace it. |
 
 During an autoplay backup, Twitch's quality menu can still show Source while playback is at 360p. Vaft attempts to restore full quality when the break ends.
 

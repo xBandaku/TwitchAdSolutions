@@ -790,7 +790,7 @@ for (const file of scripts.filter(script => script.file.includes('brave-fix')).m
     });
 }
 
-for (const file of ['vaft/vaft.user.js', 'vaft/vaft-violentmonkey.user.js', 'vaft/vaft-ublock-origin.js',
+for (const file of ['vaft/vaft.user.js', 'vaft/vaft-ublock-origin.js',
     'video-swap-new/video-swap-new.user.js', 'video-swap-new/video-swap-new-ublock-origin.js']) {
     test('synthetic resilience: ' + file + ' preserves recovery numbering and blocks relative ad media inside its injected worker', async ({ page, context }) => {
         const state = await boot(page, context, file);
@@ -1042,8 +1042,7 @@ for (const file of scripts.filter(script => /^(vaft\/vaft|video-swap-new\/)/.tes
         expect(reportText).toContain('### Script version\n\n' + script);
         expect(reportText).toContain('### Browser\n\nPlease fill in');
         expect(reportText).toContain(file.includes('ublock-origin') ? '### Install method\n\nuBlock Origin'
-            : file.includes('violentmonkey') ? '### Install method\n\nViolentmonkey'
-                : '### Install method\n\nPlease fill in');
+            : '### Install method\n\nPlease fill in');
         expect(reportText).toContain('### What happened?');
         expect(reportText).toContain('### Console output\n\n```shell');
         expect(reportText).toContain('### Other Twitch extensions installed');
