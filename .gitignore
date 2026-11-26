@@ -4,3 +4,4 @@ playwright-report/
 test-results/
 __pycache__/
 release-artifact/
+background-runs/
