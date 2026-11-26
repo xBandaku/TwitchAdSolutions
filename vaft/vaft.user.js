@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TwitchAdSolutions (vaft)
 // @namespace    https://github.com/ryanbr/TwitchAdSolutions
-// @version      68.5.44
+// @version      68.5.45
 // @description  Multiple solutions for blocking Twitch ads (vaft)
 // @updateURL    https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft.user.js
 // @downloadURL  https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft.user.js
@@ -48,7 +48,7 @@
         }
     }
     'use strict';
-    const ourTwitchAdSolutionsVersion = 129;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 130;// Used to prevent conflicts with outdated versions of the scripts
     const TAS_INSTALL_METHOD = 'userscript';
     console.log('[AD DEBUG] TwitchAdSolutions vaft v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
@@ -99,6 +99,9 @@
         scope.ForceAccessTokenPlayerType = 'popout';
         scope.PreferLowQualityBackup = true;// Hybrid safety net for SSAI-heavy breaks: sticky escape hatch (fires after ~8s stuck in all-stripped state) + autoplay (360p) as last-resort backup when all Source types are ad-laden. Default on; set twitchAdSolutions_preferLowQualityBackup=false to disable.
         scope.FastAutoplayFirstTry = true;// When the prior break committed autoplay-via-escape-hatch, prepend autoplay (360p) to position 0 of playerTypesToTry on the next break — autoplay wins on first probe (~340ms) instead of cycling through 4 Source types (~1.5-2s). Auto-resets when a Source-tier type wins (channel recovered), so quality returns to full automatically if Twitch ever brings back non-ad-laden Source backups. Default on as of v67.1.0 — field data (project_all_channels_csai_only_marked) confirms every observed channel exhausts Source-tier on every break. Opt-out via localStorage twitchAdSolutions_fastAutoplayFirstTry=false.
+        scope.KeepBackupSessions = true;// Keep an ad-laden backup session (its access token) for up to BackupSessionMaxAdAgeMs of ads instead of requesting a new token on every poll; each new session starts with its own preroll. Opt-out: twitchAdSolutions_keepBackupSessions=false
+        scope.BackupSessionMaxAdAgeMs = 60000;
+        scope.AlignBackupSequence = true;// Renumber a committed backup playlist onto the native media-sequence numbering (matched by PROGRAM-DATE-TIME) so a lower-numbered backup is not treated as already played. Opt-out: twitchAdSolutions_alignBackupSequence=false
         scope.BackupSwapFirst = true;// On ad detect, immediately swap to a backup player-type m3u8 (TTV-AB-style). Avoids MediaSource mixing from strip activity — fewer loading circles in field. Cost: extra fetches on every ad break. Default on; set twitchAdSolutions_backupSwapFirst=false to disable.
         scope.DisableAdSpoofing = true;// Default OFF (was ON through v68.2.0). The always-100%-watched + audible + visible spoof beacon pattern may itself fingerprint as anomalous and trigger detection escalation (CSAI reaching the committed backup) — observed correlation in field + TTV-AB maintainer hypothesis. Spoof-accepted (no GQL rejection) does NOT prove not-fingerprinted; Twitch can 200-OK while using the beacon pattern as silent detection input. Opt in by setting twitchAdSolutions_disableAdSpoofing=false to re-enable the GQL ad-tracking beacons (video_ad_impression, video_ad_quartile_complete x 4, video_ad_pod_complete).
         scope.RecoverFromSilentMute = true;// On hard reload, if the element is already muted but vaft has successfully unmuted at any point earlier this session, treat it as a silent Twitch re-mute and recover via the backstop. Default on; set twitchAdSolutions_recoverFromSilentMute=false to disable (useful for users who deliberately mute mid-session).
@@ -137,6 +140,10 @@
         scope.AdSegmentCache = new Map();
         scope.AllSegmentsAreAdSegments = false;
         scope.StreamInfoMaxAgeMs = 30 * 60 * 1000;
+        scope.UntrackedReload = true;// Reload the player (at most 2 per 10 minutes) when a live media playlist vaft never registered carries ad markers. Opt-out: twitchAdSolutions_untrackedReload=false
+        scope.UntrackedAdReloads = [];
+        scope.UntrackedAdReloadGaveUpAt = 0;
+        scope.PictureByPicturePlaylists = new Set();// variant URLs of picture-by-picture masters: never registered on purpose, so not a lost registration
     }
     function pruneStreamInfos() {
         const now = Date.now();
@@ -231,6 +238,11 @@
             // Hybrid-mode state (PreferLowQualityBackup)
             EscapeHatchFired: false,
             LastBreakUsedEscapeHatch: false,// FastAutoplayFirstTry: set when a break commits autoplay via PreferLowQualityBackup escape hatch (= all 4 Source types contaminated this break). Read at next break's backup-search entry to prepend autoplay first. Reset when a Source-tier type wins (channel recovered).
+            BackupSequenceOffset: null,
+            BackupSessionAdSince: Object.create(null),// KeepBackupSessions: per player type, since when its cached session has carried ads; cleared when it is clean or replaced
+            ActiveBackupWasClean: false,// the active backup's last committed playlist was clean, so it is probed first on the next poll
+            AllBackupsAdLaden: false,// every backup type was ad-laden this break and an ad-laden one is committed; no poll-based early reload while true
+            LoggedEarlyReloadSkipThisBreak: false,// AlignBackupSequence: native minus backup media sequence, fixed when a backup type is committed and applied to every poll of that type; null = not computed
             FastAutoplayConsecutive: 0,// Count of consecutive breaks won by fast-autoplay without testing Source-tier. Triggers periodic re-probe to detect channel recovery (Twitch reversing CSAI delivery). Reset when full Source-tier probe runs or Source-tier wins.
             // Reload cooldown
             LastPlayerReload: 0,
@@ -405,6 +417,9 @@
                     ${getWasmWorkerJs.toString()}
                     ${getServerTimeFromM3u8.toString()}
                     ${replaceServerTimeInM3u8.toString()}
+                    ${getBackupSequenceOffset.toString()}
+                    ${shiftMediaSequence.toString()}
+                    ${planUntrackedAdReload.toString()}
                     ${pruneStreamInfos.toString()}
                     ${createStreamInfo.toString()}
                     const workerString = getWasmWorkerJs('${twitchBlobUrl.replaceAll("'", "%27")}');
@@ -419,6 +434,9 @@
                     PinBackupPlayerType = ${PinBackupPlayerType};
                     PreferLowQualityBackup = ${PreferLowQualityBackup};
                     FastAutoplayFirstTry = ${FastAutoplayFirstTry};
+                    AlignBackupSequence = ${AlignBackupSequence};
+                    UntrackedReload = ${UntrackedReload};
+                    KeepBackupSessions = ${KeepBackupSessions};
                     BackupSwapFirst = ${BackupSwapFirst};
                     DisableAdSpoofing = ${DisableAdSpoofing};
                     ForceAccessTokenPlayerType = '${ForceAccessTokenPlayerType}';
@@ -537,6 +555,7 @@
                             }
                         }
                         playerBufferState.inAdBreak = !!e.data.hasAds;
+                        playerBufferState.allBackupsAdLaden = !!e.data.hasAds && e.data.allBackupsAdLaden === true;
                         // Clear drift catch-up when ads start — don't run 1.1x during ad handling
                         if (e.data.hasAds && (driftCatchUpInterval || driftCatchUpTimeout)) {
                             stopDriftCorrection();
@@ -806,6 +825,21 @@
                             reject(err);
                         });
                     });
+                } else if (url.includes('/channel/hls/')) {
+                    // A picture-by-picture master is passed through unprocessed. Remember its variants so the
+                    // untracked-playlist reload does not take them for a main stream that lost its registration.
+                    return realFetch(fetchInput(url), options).then(async function(response) {
+                        if (response.status === 200) {
+                            try {
+                                const text = resolvePlaylistUrls(await response.clone().text(), response.url || url);
+                                if (PictureByPicturePlaylists.size > 50) PictureByPicturePlaylists.clear();
+                                for (const line of text.split(/\r?\n/)) {
+                                    if (line && !line.startsWith('#')) PictureByPicturePlaylists.add(line.trimEnd());
+                                }
+                            } catch {}
+                        }
+                        return response;
+                    });
                 }
             }
             return realFetch(input, options);
@@ -856,6 +890,86 @@
             return newServerTime ? encodingsM3u8.replace(/(#EXT-X-SESSION-DATA:DATA-ID="SERVER-TIME",VALUE=")[^"]+(")/, `$1${newServerTime}$2`) : encodingsM3u8;
         }
         return newServerTime ? encodingsM3u8.replace(/(SERVER-TIME=")[0-9.]+"/, `SERVER-TIME="${newServerTime}"`) : encodingsM3u8;
+    }
+    // A backup playlist can be numbered differently from the native one for the same moment
+    // (Helli24 field log: backup 10630..10643 against native 10640..10654 with PROGRAM-DATE-TIMEs
+    // within 1.4s). The player orders segments by media sequence, so a lower-numbered backup looks
+    // already played and nothing is appended until its numbers pass native: a 10-30s freeze at ad
+    // start. The offset maps the backup numbering onto native by the newest segment of each
+    // playlist; the time difference is rounded down so the first new backup segment overlaps the
+    // native buffer instead of leaving a gap. 0 when either playlist lacks a sequence or a PDT.
+    function getBackupSequenceOffset(nativeM3u8, backupM3u8) {
+        const describe = (m3u8) => {
+            const first = parseInt((m3u8.match(/#EXT-X-MEDIA-SEQUENCE:(\d+)/) || [])[1]);
+            const count = (m3u8.match(/#EXTINF/g) || []).length;
+            const pdts = m3u8.match(/#EXT-X-PROGRAM-DATE-TIME:[^\r\n]+/g);
+            const duration = parseFloat((m3u8.match(/#EXTINF:([\d.]+)/) || [])[1]);
+            return {
+                first,
+                last: first + count - 1,
+                newest: pdts ? Date.parse(pdts[pdts.length - 1].substring('#EXT-X-PROGRAM-DATE-TIME:'.length)) : NaN,
+                duration: duration > 0 ? duration : 2
+            };
+        };
+        const native = describe(nativeM3u8);
+        const backup = describe(backupM3u8);
+        if ([native.last, native.newest, backup.last, backup.newest].some(isNaN)) {
+            return { offset: 0, native, backup };
+        }
+        const offset = (native.last - backup.last) - Math.floor((native.newest - backup.newest) / 1000 / backup.duration);
+        return { offset, native, backup };
+    }
+    // Shifts #EXT-X-MEDIA-SEQUENCE and #EXT-X-TWITCH-LIVE-SEQUENCE by offset. HLS sequence numbers
+    // cannot be negative, and at a preroll the native playlist starts near 0 while the backup
+    // carries more segments (Helli24 field log: backup 13..26 against native 0..2, offset -24).
+    // The oldest segments that would land below 0 are dropped instead; they are the ones that do
+    // not line up with native. At least one segment is kept, and each dropped discontinuity is
+    // counted into #EXT-X-DISCONTINUITY-SEQUENCE as the spec requires.
+    function shiftMediaSequence(m3u8, offset) {
+        if (!offset) {
+            return m3u8;
+        }
+        const first = parseInt((m3u8.match(/#EXT-X-MEDIA-SEQUENCE:(\d+)/) || [])[1]);
+        if (isNaN(first)) {
+            return m3u8;
+        }
+        let drop = 0;
+        if (first + offset < 0) {
+            const segments = (m3u8.match(/#EXTINF/g) || []).length;
+            drop = Math.min(-(first + offset), Math.max(segments - 1, 0));
+        }
+        let droppedDiscontinuities = 0;
+        if (drop > 0) {
+            let remaining = drop;
+            const kept = [];
+            for (const line of m3u8.split('\n')) {
+                const tag = line.trim();
+                if (remaining > 0) {
+                    if (tag.startsWith('#EXTINF') || tag.startsWith('#EXT-X-PROGRAM-DATE-TIME') || tag.startsWith('#EXT-X-BYTERANGE')) {
+                        continue;
+                    }
+                    if (tag === '#EXT-X-DISCONTINUITY') {
+                        droppedDiscontinuities++;
+                        continue;
+                    }
+                    if (tag && !tag.startsWith('#')) {
+                        remaining--;
+                        continue;
+                    }
+                }
+                kept.push(line);
+            }
+            m3u8 = kept.join('\n');
+        }
+        const renumber = (seq) => Math.max(parseInt(seq) + offset + drop, 0);
+        m3u8 = m3u8.replace(/#EXT-X-MEDIA-SEQUENCE:(\d+)/, (match, seq) => '#EXT-X-MEDIA-SEQUENCE:' + renumber(seq))
+            .replace(/#EXT-X-TWITCH-LIVE-SEQUENCE:(\d+)/, (match, seq) => '#EXT-X-TWITCH-LIVE-SEQUENCE:' + renumber(seq));
+        if (droppedDiscontinuities > 0) {
+            m3u8 = /#EXT-X-DISCONTINUITY-SEQUENCE:\d+/.test(m3u8)
+                ? m3u8.replace(/#EXT-X-DISCONTINUITY-SEQUENCE:(\d+)/, (match, seq) => '#EXT-X-DISCONTINUITY-SEQUENCE:' + (parseInt(seq) + droppedDiscontinuities))
+                : m3u8.replace(/(#EXT-X-MEDIA-SEQUENCE:\d+)/, '$1\n#EXT-X-DISCONTINUITY-SEQUENCE:' + droppedDiscontinuities);
+        }
+        return m3u8;
     }
     function hasAdTags(textStr) {
         return AdSignifiers.some((s) => s && textStr.includes(s));
@@ -1329,10 +1443,39 @@
         }
         return fallbackClosestUrl;
     }
+    // processM3U8 passes a live media playlist that no parsed master registered through unfiltered,
+    // ads included. That happens when the registration was lost or the master was never seen (Helli24
+    // field log: "ADS NOT BLOCKED" with 0 tracked variant URLs). One player reload requests the master
+    // again through hookWorkerFetch, which registers the stream. Limits: one reload per 30s and two per
+    // 10 minutes, then one "giving up" line per 10 minutes. VOD and picture-by-picture playlists are
+    // ignored. Returns null or { reload, log }.
+    function planUntrackedAdReload(url, textStr, now) {
+        if (!UntrackedReload || !textStr || !textStr.includes('#EXTINF')) return null;
+        if (textStr.includes('#EXT-X-ENDLIST') || textStr.includes('#EXT-X-PLAYLIST-TYPE:')) return null;
+        if (PictureByPicturePlaylists.has(url) || !hasAdTags(textStr)) return null;
+        while (UntrackedAdReloads.length > 0 && now - UntrackedAdReloads[0] > 600000) {
+            UntrackedAdReloads.shift();
+        }
+        if (UntrackedAdReloads.length > 0 && now - UntrackedAdReloads[UntrackedAdReloads.length - 1] < 30000) return null;
+        if (UntrackedAdReloads.length >= 2) {
+            if (now - UntrackedAdReloadGaveUpAt < 600000) return null;
+            UntrackedAdReloadGaveUpAt = now;
+            return { reload: false, log: '[AD DEBUG] Unregistered playlist still carries ads after 2 player reloads in 10 minutes — ads are not blocked, refresh the tab' };
+        }
+        UntrackedAdReloads.push(now);
+        return { reload: true, log: '[AD DEBUG] Unregistered playlist carries ads — reloading the player so the stream is registered again (' + UntrackedAdReloads.length + '/2 in 10 minutes)' };
+    }
     // Core ad-blocking logic: detect ads in m3u8, fetch backup streams, strip ad segments
     function processM3U8(url, textStr, realFetch, requestId = 0, requestedStream = StreamInfosByUrl[url]) {
         const streamInfo = requestedStream;
-        if (!streamInfo) return Promise.resolve(textStr);
+        if (!streamInfo) {
+            const untracked = planUntrackedAdReload(url, textStr, Date.now());
+            if (untracked) {
+                console.log(untracked.log);
+                if (untracked.reload) postMessage({ key: 'ReloadPlayer', kind: 'untracked-ads' });
+            }
+            return Promise.resolve(textStr);
+        }
         const process = async () => {
             if (StreamInfos[streamInfo.ChannelName] !== streamInfo || ActiveStreamInfo !== streamInfo) {
                 return stripAdSegments(textStr, false, streamInfo);
@@ -1367,7 +1510,16 @@
         const recoveryThin = (streamInfo.RecoverySegments?.length || 0) < 3;
         const maxEarlyReloads = recoveryThin ? Math.max(2, streamInfo.PodLength || 1) : Math.max(1, streamInfo.PodLength || 1);
         const effectiveThreshold = recoveryThin ? 1 : EarlyReloadPollThreshold;
-        if (EarlyReloadPollThreshold > 0 && (streamInfo.ConsecutiveAllStrippedPolls || 0) >= effectiveThreshold && !streamInfo.EarlyReloadTriggered && (streamInfo.EarlyReloadCount || 0) < maxEarlyReloads) {
+        const due = EarlyReloadPollThreshold > 0 && (streamInfo.ConsecutiveAllStrippedPolls || 0) >= effectiveThreshold && !streamInfo.EarlyReloadTriggered && (streamInfo.EarlyReloadCount || 0) < maxEarlyReloads;
+        // A reload gets a new session, and while every backup type carries ads that only starts another preroll.
+        if (due && streamInfo.AllBackupsAdLaden) {
+            if (!streamInfo.LoggedEarlyReloadSkipThisBreak) {
+                streamInfo.LoggedEarlyReloadSkipThisBreak = true;
+                console.log('[AD DEBUG] Early reload skipped — every backup type carries ads, waiting for a clean backup or the end of the break');
+            }
+            return;
+        }
+        if (due) {
             streamInfo.EarlyReloadTriggered = true;
             streamInfo.EarlyReloadAwaitingResult = true;
             streamInfo.EarlyReloadCount = (streamInfo.EarlyReloadCount || 0) + 1;
@@ -1445,6 +1597,7 @@
                 streamInfo.LastCommittedBackupPlayerType = null;
                 streamInfo.FreezeStartedAt = 0;
                 streamInfo.CsaiOnlyThisBreak = false;// Reset sticky CSAI flag for new break
+                streamInfo.AllBackupsAdLaden = false;// a search still in flight from the previous break must not carry this over
                 console.log('[AD DEBUG] Ad detected — type: ' + (streamInfo.IsMidroll ? 'midroll' : 'preroll') + ', channel: ' + streamInfo.ChannelName + ', pod: ' + podLength + ' ad(s) (~' + (podLength * 30) + 's expected), signifiers: ' + getMatchedAdSignifiers(textStr).join(', '));
                 postStreamMessage(streamInfo, {
                     key: 'UpdateAdBlockBanner',
@@ -1666,6 +1819,16 @@
                     }
                 }
             }
+            // A clean active backup is probed first and kept while it stays clean. Otherwise the fast-autoplay
+            // reorder replaces a clean Source backup with 360p on the next poll (Helli24 field log).
+            if (streamInfo.ActiveBackupPlayerType && streamInfo.ActiveBackupWasClean) {
+                const activeIndex = playerTypesToTry.indexOf(streamInfo.ActiveBackupPlayerType);
+                if (activeIndex > 0) {
+                    playerTypesToTry.splice(activeIndex, 1);
+                    playerTypesToTry.unshift(streamInfo.ActiveBackupPlayerType);
+                }
+            }
+            let activeResortM3u8 = null;
             for (let playerTypeIndex = startIndex; !backupM3u8 && playerTypeIndex < playerTypesToTry.length && Date.now() < backupSearchDeadline && Date.now() >= streamInfo.BackupRetryAt; playerTypeIndex++) {
                 const playerType = playerTypesToTry[playerTypeIndex];
                 const realPlayerType = playerType.replace('-CACHED', '');
@@ -1678,6 +1841,7 @@
                     continue;
                 }
                 const isFullyCachedPlayerType = playerType != realPlayerType;
+                let keepAdLadenSession = false;
                 for (let i = 0; i < 2 && Date.now() < backupSearchDeadline; i++) {
                     // This caches the m3u8 if it doesn't have ads. If the already existing cache has ads it fetches a new version (second loop)
                     let isFreshM3u8 = false;
@@ -1712,6 +1876,7 @@
                                 const encodingsM3u8Response = await fetchPlaylist(urlInfo.href, realFetch, Math.min(BackupRequestTimeout, backupSearchDeadline - Date.now()));
                                 if (encodingsM3u8Response) {
                                     encodingsM3u8 = streamInfo.BackupEncodingsM3U8Cache[playerType] = encodingsM3u8Response;
+                                    delete streamInfo.BackupSessionAdSince[playerType];
                                     // Reset detection diagnostic counter on success — token fetched, m3u8 fetched.
                                     streamInfo.ConsecutiveTokenFetchFailures = 0;
                                     streamInfo.LoggedTokenFailureStreak = false;
@@ -1751,6 +1916,15 @@
                                     if (playerType == FallbackPlayerType) {
                                         fallbackM3u8 = m3u8Text;
                                     }
+                                    if (hasAdTags(m3u8Text)) {
+                                        streamInfo.BackupSessionAdSince[playerType] ||= Date.now();
+                                        if (playerType === streamInfo.ActiveBackupPlayerType) activeResortM3u8 = m3u8Text;
+                                        // A new token would start a new session with its own preroll, so keep this one
+                                        // until it has carried ads for BackupSessionMaxAdAgeMs.
+                                        keepAdLadenSession = KeepBackupSessions && Date.now() - streamInfo.BackupSessionAdSince[playerType] < BackupSessionMaxAdAgeMs;
+                                    } else {
+                                        delete streamInfo.BackupSessionAdSince[playerType];
+                                    }
                                     if ((!hasAdTags(m3u8Text) && (SimulatedAdsDepth == 0 || playerTypeIndex >= SimulatedAdsDepth - 1)) || (!fallbackM3u8 && playerTypeIndex >= playerTypesToTry.length - 1)) {
                                         if ((streamInfo.ConsecutiveAllStrippedPolls || 0) >= 1 && !hasAdTags(m3u8Text)) {
                                             const prevType = streamInfo.LastCommittedBackupPlayerType;
@@ -1777,7 +1951,9 @@
                                             console.log('[AD DEBUG] Backup stream (' + playerType + ') also has ads');
                                         }
                                     }
-                                    if (isFullyCachedPlayerType || isDoingMinimalRequests) {
+                                    // With a backup already active, an unchecked ad-laden pick would only switch between ad-laden
+                                    // types (Helli24 field log: embed and mobile_web alternating every poll), so go on probing.
+                                    if ((isFullyCachedPlayerType || isDoingMinimalRequests) && (!streamInfo.ActiveBackupPlayerType || !hasAdTags(m3u8Text))) {
                                         backupPlayerType = playerType;
                                         backupM3u8 = m3u8Text;
                                         postStreamMessage(streamInfo, { key: 'TASDiagnostic', event: 'backup-selected', playerType, quality: backupQuality, durationMs: Date.now() - backupSearchStart });
@@ -1804,11 +1980,23 @@
                             console.log('[AD DEBUG] Backup stream error for ' + playerType + ': ' + err.message);
                         }
                     }
+                    if (keepAdLadenSession) {
+                        break;
+                    }
                     streamInfo.BackupEncodingsM3U8Cache[playerType] = null;
                     if (isFreshM3u8) {
                         break;
                     }
                 }
+            }
+            // Every probed type carried ads: stay on the active type rather than renumbering the stream onto
+            // another ad-laden one.
+            if (backupM3u8 && activeResortM3u8 && hasAdTags(backupM3u8) && backupPlayerType !== streamInfo.ActiveBackupPlayerType) {
+                backupPlayerType = streamInfo.ActiveBackupPlayerType;
+                backupM3u8 = activeResortM3u8;
+            }
+            if (backupM3u8) {
+                streamInfo.AllBackupsAdLaden = hasAdTags(backupM3u8) && playerTypesToTry.every(type => streamInfo.LoggedBackupAdsByType?.has(type));
             }
             if (!backupM3u8 && fallbackM3u8) {
                 // Don't fall back to a type we've already marked contaminated this break.
@@ -1836,7 +2024,19 @@
                 streamInfo.BackupRetryAt = backupM3u8 ? 0 : Date.now() + BackupRetryDelay;
             }
             if (backupM3u8 && streamInfo.IsShowingAd) {
+                if (AlignBackupSequence) {
+                    if (streamInfo.ActiveBackupPlayerType != backupPlayerType || streamInfo.BackupSequenceOffset === null) {
+                        const alignment = getBackupSequenceOffset(textStr, backupM3u8);
+                        streamInfo.BackupSequenceOffset = alignment.offset;
+                        if (alignment.offset !== 0) {
+                            const dropped = Math.max(-(alignment.backup.first + alignment.offset), 0);
+                            console.log('[AD DEBUG] Aligning backup media sequence by ' + (alignment.offset > 0 ? '+' : '') + alignment.offset + ' (backup ' + alignment.backup.first + '..' + alignment.backup.last + ', native ' + alignment.native.first + '..' + alignment.native.last + ')' + (dropped > 0 ? ', dropping the ' + dropped + ' oldest backup segments that would be numbered below 0' : ''));
+                        }
+                    }
+                    backupM3u8 = shiftMediaSequence(backupM3u8, streamInfo.BackupSequenceOffset);
+                }
                 textStr = backupM3u8;
+                streamInfo.ActiveBackupWasClean = !hasAdTags(backupM3u8);
                 streamInfo.LastCommittedBackupPlayerType = backupPlayerType;
                 if (streamInfo.ActiveBackupPlayerType != backupPlayerType) {
                     streamInfo.ActiveBackupPlayerType = backupPlayerType;
@@ -1849,7 +2049,7 @@
                     // gets a Source-tier ad-marked backup (strip+recovery path engages,
                     // freezes likely) instead of the intended 360p clean autoplay backup.
                     // A minimal-requests pick can still carry ads; don't pin it or treat it as a recovered Source tier.
-                    const committedClean = !(isDoingMinimalRequests && hasAdTags(backupM3u8));
+                    const committedClean = !hasAdTags(backupM3u8);
                     if (committedClean && ((PinBackupPlayerType && backupPlayerType !== 'autoplay') || sourceQualityTypes.includes(backupPlayerType))) {
                         streamInfo.PinnedBackupPlayerType = backupPlayerType;
                     }
@@ -2008,6 +2208,10 @@
                 streamInfo.HasLoggedUnknownSignifiers = false;
                 streamInfo.LoggedFastAutoplayThisBreak = false;
                 streamInfo.LoggedFastAutoplayReprobeThisBreak = false;
+                streamInfo.BackupSequenceOffset = null;
+                streamInfo.ActiveBackupWasClean = false;
+                streamInfo.AllBackupsAdLaden = false;
+                streamInfo.LoggedEarlyReloadSkipThisBreak = false;
                 // A no-strip break needs a reset only if backup playback changed the media source.
                 if (!hadStrippedSegments) {
                     console.log('[AD DEBUG] CSAI-only ad break (stripped 0) — clearing backup without player action');
@@ -2082,7 +2286,8 @@
             hasAds: streamInfo.IsShowingAd,
             isStrippingAdSegments: streamInfo.IsStrippingAdSegments,
             numStrippedAdSegments: streamInfo.NumStrippedAdSegments,
-            activeBackupPlayerType: streamInfo.ActiveBackupPlayerType
+            activeBackupPlayerType: streamInfo.ActiveBackupPlayerType,
+            allBackupsAdLaden: streamInfo.IsShowingAd && streamInfo.AllBackupsAdLaden
         });
         return textStr;
     }
@@ -2242,6 +2447,7 @@
         loggedPauseIntent: false,
         weJustPaused: 0,
         inAdBreak: false,
+        allBackupsAdLaden: false,// the worker found every backup type ad-laden this break: no loading-circle reload
         hasHadData: false,
         adStallStartAt: 0,
         lastAdStallReloadAt: 0,
@@ -2312,6 +2518,60 @@
         });
     }
     // Poll the player state to detect and fix buffering caused by ad stream switching
+    // A userscript manager can inject vaft after Twitch has built its player worker. That worker
+    // never runs hookWorkerFetch, so no ad break is detected for the whole page (Helli24 field log:
+    // no "Worker intercepted" line while a stitched-ad playlist played). A hard player reload makes
+    // Twitch build a new worker through the hooked constructor. When Twitch's player code captured
+    // the native constructor first, a player reload builds another unhooked worker (second Helli24
+    // log), and only a page reload helps. Acting only while no worker was ever intercepted on this
+    // page keeps a worker handle that merely fails the identity check from causing reloads.
+    function checkUnhookedPlayerWorker(playerAndState) {
+        const unhookedWorkerState = checkUnhookedPlayerWorker.state ||= { worker: null, firstSeenAt: 0, playerReloaded: false, gaveUp: false };
+        const pageReloadKey = 'twitchAdSolutions_unhookedPageReloadAt';
+        const player = playerAndState.player;
+        const worker = player.core?.worker;
+        const video = player.getHTMLVideoElement?.();
+        if (!worker || typeof worker.postMessage !== 'function' || hookWindowWorker.workers?.has(worker) || twitchWorkers.length > 0
+            || playerAndState.state.props?.content?.type !== 'live' || !video || video.readyState < 1 || video.paused || video.ended
+            || document.hidden || document.pictureInPictureElement || playerBufferState.userPauseIntent) {
+            unhookedWorkerState.worker = null;
+            return;
+        }
+        if (unhookedWorkerState.worker !== worker) {
+            unhookedWorkerState.worker = worker;
+            unhookedWorkerState.firstSeenAt = Date.now();
+            return;
+        }
+        if (Date.now() - unhookedWorkerState.firstSeenAt < 5000 || unhookedWorkerState.gaveUp) return;
+        if (!unhookedWorkerState.playerReloaded) {
+            unhookedWorkerState.playerReloaded = true;
+            unhookedWorkerState.worker = null;
+            console.log('[AD DEBUG] Player worker was created before vaft loaded (not hooked) — hard-reloading the player so ad blocking applies');
+            doTwitchPlayerTask(false, true, 'worker-recovery');
+            return;
+        }
+        unhookedWorkerState.gaveUp = true;
+        let skipped = null;
+        try {
+            const lastAt = Number(sessionStorage.getItem(pageReloadKey)) || 0;
+            if (localStorage.getItem('twitchAdSolutions_unhookedPageReload') === 'false') {
+                skipped = 'disabled via twitchAdSolutions_unhookedPageReload=false';
+            } else if (lastAt && Date.now() - lastAt < 10 * 60 * 1000) {
+                skipped = 'this tab already reloaded ' + Math.round((Date.now() - lastAt) / 1000) + 's ago';
+            } else {
+                sessionStorage.setItem(pageReloadKey, String(Date.now()));
+            }
+        } catch (err) {
+            skipped = 'storage unavailable (' + err.message + ')';
+        }
+        if (skipped) {
+            console.log('[AD DEBUG] Player worker still not hooked after a player reload, page reload skipped (' + skipped + ') — ads are not blocked on this page, refresh the tab');
+            return;
+        }
+        console.log('[AD DEBUG] Player worker still not hooked after a player reload — reloading the page once so vaft can hook the new worker');
+        recordTASDiagnostic({ event: 'page-refresh' });
+        window.location.reload();
+    }
     function monitorPlayerBuffering() {
         updateTASWorkerDiagnostic();
         clearTimeout(monitorPlayerBuffering.timeoutId);
@@ -2327,6 +2587,7 @@
                     state: playerAndState.state
                 };
                 updatePlayerPauseIntent(playerAndState);
+                checkUnhookedPlayerWorker(playerAndState);
             }
         }
         if (playerForMonitoringBuffering) {
@@ -2711,7 +2972,10 @@
                         && video.currentTime === 0
                         && !!playerBufferState.lastReloadChannel
                         && playerBufferState.lastReloadChannel === getPlaybackChannelName(playerForMonitoringBuffering);
-                    if (isStalled && cooldownExpired && !recentReload && (playerBufferState.hasHadData || stuckBeforeStart)) {
+                    // While every backup carries ads, a reload only starts another preroll; a player that never
+                    // restarted is still reloaded.
+                    const loadingCircle = playerBufferState.hasHadData && !playerBufferState.allBackupsAdLaden;
+                    if (isStalled && cooldownExpired && !recentReload && (loadingCircle || stuckBeforeStart)) {
                         if (!playerBufferState.adStallStartAt) {
                             playerBufferState.adStallStartAt = Date.now();
                         } else if ((Date.now() - playerBufferState.adStallStartAt) > 3000) {
@@ -3009,11 +3273,14 @@
     }
     // Pause/play or fully reload the Twitch player, preserving quality/volume settings
     function doTwitchPlayerTask(isPausePlay, isReload, reloadKind) {
+        // These kinds need a new player and token even when playback looks healthy: the playing
+        // stream itself is the problem (unfiltered by an unhooked worker or an unregistered playlist).
+        const forcesReset = isReload && ['early', 'worker-recovery', 'untracked-ads'].includes(reloadKind);
         if (isReload || isPausePlay) recordTASDiagnostic({ event: isReload ? 'reload-request' : 'pause-play', reason: reloadKind || 'normal' });
         const active = doTwitchPlayerTask.recovery;
         if (active) {
             if (active.isCurrent()) {
-                if (isReload && reloadKind === 'early') active.upgrade();
+                if (forcesReset) active.upgrade();
                 return active.promise;
             }
             active.cancel();
@@ -3043,7 +3310,7 @@
         const playerPaused = player.isPaused();
         const wasPaused = playerPaused || player.core?.paused;
         // Paused decoder internals can be the failure requiring a reset, not a user action.
-        const requiredReset = isReload && reloadKind === 'early' && !playerPaused && !document.pictureInPictureElement;
+        const requiredReset = forcesReset && !playerPaused && !document.pictureInPictureElement;
         if (wasPaused && !requiredReset) {
             if (playerBufferState.weJustPaused && (Date.now() - playerBufferState.weJustPaused) < 10000) {
                 try { player.play()?.catch?.(() => {}); } catch {}
@@ -3070,7 +3337,7 @@
             return;
         }
         // Playback and live latency cannot prove mixed-source tracks are synchronized.
-        if (isReload && reloadKind !== 'early') {
+        if (isReload && !forcesReset) {
             const video = player.getHTMLVideoElement?.();
             if (video && video.readyState >= 3 && !video.paused && !video.ended) {
                 let latencySec = 0;
@@ -3119,8 +3386,8 @@
             let attempt = 0, maxAttempts = 2, needsUpgrade = false;
             let deadline = 0, observedVideo = null, initialTime = 0, playedVideo = null;
             let settingsAfterReload, preMutedVideo = null;
-            let hardReload = reloadKind === 'early' && !iosSoftReload;
-            let refreshToken = reloadKind === 'early';
+            let hardReload = forcesReset && !iosSoftReload;
+            let refreshToken = forcesReset;
             request.upgrade = () => {
                 if (refreshToken) return;
                 refreshToken = true;
@@ -3509,7 +3776,7 @@
     }
     function getTASDiagnosticState() {
         if (typeof window === 'undefined') return null;
-        return window.__tasDiagnostics || (window.__tasDiagnostics = { script: 'vaft', version: '68.5.44',
+        return window.__tasDiagnostics || (window.__tasDiagnostics = { script: 'vaft', version: '68.5.45',
             startedAt: Date.now(), events: [], current: { backup: 'none', quality: 'unknown', recovery: 'none', inAdBreak: false }, render() {} });
     }
     function getTASDiagnostics() {
@@ -3575,7 +3842,7 @@
             if (data.quality !== undefined) entry.quality = /^\d{1,5}x\d{1,5}$/.test(data.quality) ? data.quality : 'unknown';
             if (Number.isFinite(data.durationMs)) entry.durationMs = Math.min(60000, Math.max(0, data.durationMs));
             if (data.event === 'reload-request') {
-                entry.reason = ['early', 'worker-error', 'normal'].includes(data.reason) ? data.reason : 'normal';
+                entry.reason = ['early', 'worker-error', 'worker-recovery', 'untracked-ads', 'normal'].includes(data.reason) ? data.reason : 'normal';
                 state.current.recovery = entry.reason;
             }
             if (data.event === 'backup-selected') {
@@ -4002,7 +4269,7 @@
         window.twitchAdSolutionsTools = { openSettings: show, diagnostics: getTASDiagnostics };
     }
     function onContentLoaded() {
-        initializeTASControls('vaft', '68.5.44');
+        initializeTASControls('vaft', '68.5.45');
         if (document.getElementById('seventv-extension')) {
             console.log('[AD DEBUG] Warning: 7TV extension detected — may cause black screen or buffering issues. If you experience problems, try disabling 7TV.');
         }
@@ -4109,6 +4376,18 @@
         if (lsFastAutoplay === 'false') {
             FastAutoplayFirstTry = false;
             console.log('[AD DEBUG] FastAutoplayFirstTry disabled via localStorage — full Source-tier probe on every break (no autoplay fast-path)');
+        }
+        if (localStorage.getItem('twitchAdSolutions_keepBackupSessions') === 'false') {
+            KeepBackupSessions = false;
+            console.log('[AD DEBUG] KeepBackupSessions disabled via localStorage — an ad-laden backup gets a new access token on every poll');
+        }
+        if (localStorage.getItem('twitchAdSolutions_untrackedReload') === 'false') {
+            UntrackedReload = false;
+            console.log('[AD DEBUG] UntrackedReload disabled via localStorage — no player reload when an unregistered playlist carries ads');
+        }
+        if (localStorage.getItem('twitchAdSolutions_alignBackupSequence') === 'false') {
+            AlignBackupSequence = false;
+            console.log('[AD DEBUG] AlignBackupSequence disabled via localStorage — backup playlists keep their own media sequence numbers');
         }
         const lsBackupSwapFirst = localStorage.getItem('twitchAdSolutions_backupSwapFirst');
         if (lsBackupSwapFirst === 'false') {
