@@ -35,16 +35,18 @@
 
 If you don't see `vaft v<number> loading`, the script isn't running. Check your userscript manager or uBO resource override.
 
-### Normal Ad Break (CSAI-only, most common)
+### Normal Ad Break (ad-free backup, nothing stripped)
 
 ```
 [AD DEBUG] Ad detected — type: midroll, channel: <channel>, signifiers: stitched, stitched-ad, X-TV-TWITCH-AD
 Blocking midroll ads (embed) — backup found in 137ms
 Finished blocking ads — stripped 0 ad segments
-[AD DEBUG] CSAI-only ad break (stripped 0) — clearing backup without player action
+[AD DEBUG] No ad segments stripped — the embed backup covered the break
+[AD DEBUG] End-of-break reload: embed — flushing MediaSource to prevent A/V desync accumulation
+[AD DEBUG] Reloading Twitch player (hard, attempt 1/2)
 ```
 
-This is the ideal case. No reload, no drift correction, no disruption.
+The backup stream had no ads, so nothing was stripped. The player reloads once afterwards to drop the backup's buffered segments (and to get Source quality back after the 360p `autoplay` backup). While the tab is hidden the reload keeps the current player and only refreshes the token, logged as `soft, tab hidden`, so a stream playing in the background keeps going.
 
 ### Normal Ad Break (SSAI, segments stripped)
 
@@ -96,7 +98,7 @@ Best case — no backup stream switch, no rebuffer gap. The main stream plays un
 |---|---|
 | `Attempt to fix buffering position:X bufferedPosition:Y bufferDuration:Z` | Buffer monitor detected a stall and is attempting pause/play |
 | `Video state: readyState=2 networkState=2 ... paused=true` | Player stalled with insufficient data. May self-recover |
-| `Position jumped Xs — starting drift correction` | Player jumped ahead. Drift correction speeds up to catch live edge |
+| `Position jumped Xs — starting drift correction` | Player position moved X seconds further than the time since the last check. Drift correction speeds up to catch live edge |
 | `Downgraded reload to pause/play to preserve PiP` | PiP mode active. Using lighter recovery to keep PiP open |
 
 ### Twitch API issues
