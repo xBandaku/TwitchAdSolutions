@@ -55,9 +55,9 @@ Functions serialized with `.toString()` into the worker blob cannot reference ou
 ## Conventions
 
 - Synced pairs carry identical logic. Tests require each userscript/uBlock pair to match statement for statement at top level. uBlock files start with the line `twitch-videoad.js text/javascript` (resource header, not JS); tooling strips it.
-- Version bump for any functional change: `@version` and `ourTwitchAdSolutionsVersion` together, in every format of that script. Tests require vaft and video-swap-new to report one version in `@version`, diagnostics and the settings panel. Current: vaft 68.5.45/130, video-swap-new 1.98/66, strip 1.13/30, Brave helper 1.3.6/10.
+- Version bump for any functional change: `@version` and `ourTwitchAdSolutionsVersion` together, in every format of that script. Tests require vaft and video-swap-new to report one version in `@version`, diagnostics and the settings panel. Current: vaft 68.5.46/131, video-swap-new 1.98/66, strip 1.13/30, Brave helper 1.3.6/10.
 - Naming differs per script: vaft `AdSignifiers`, `AdSegmentURLPatterns`, `ForceAccessTokenPlayerType`, `ReloadPlayerAfterAd`; video-swap-new `AD_SIGNIFIERS`, `AD_SEGMENT_URL_PATTERNS`, `OPT_FORCE_ACCESS_TOKEN_PLAYER_TYPE`, `ReloadPlayerAfterAd`; strip `ForceAccessTokenPlayerType` (default `site`), `ReloadPlayerAfterAds`.
-- Logging: `[AD DEBUG]` prefix; inside serialized functions call `console.log` directly. Many logs are deduped per break or per page load.
+- Logging (vaft): `[AD DEBUG]` lines go through `tasLog()`, which calls `console.log` and keeps the line for the bug report. `tasLog` is serialized into the worker blob; in the worker it posts `{ key: 'TASLog', text }` and the page's worker listener stores it with `recordTASLog` (150 lines, 400 chars each). `redactTASLog` hides channel names, URLs and tokens when the report or export is built, never at capture. New vaft logs should use `tasLog`; the nested-frame, clip-editor and duplicate-script exits still call `console.log`. video-swap-new and strip call `console.log` directly. Many logs are deduped per break or per page load.
 - Settings: `localStorage` keys `twitchAdSolutions_<name>`, read once at init and injected into the worker. User-facing ones are in README; vaft-only toggles include `backupSwapFirst`, `preferLowQualityBackup`, `fastAutoplayFirstTry`, `recoverFromSilentMute`, `disableAdSpoofing` (default `'true'` = spoofing off), `disablePostBreakWedge`, `pageRefreshFallback`, `iosSoftReload` (default on), `alignBackupSequence`, `keepBackupSessions`, `untrackedReload`, `unhookedPageReload`, `disableReloadCap`, `driftCorrectionRate` (1.1). `earlyReloadPollThreshold` defaults to 3 in vaft and 5 in video-swap-new. README's settings table lists only some keys.
 - Backup player types: vaft `embed`, `site`, `popout`, `mobile_web`; video-swap-new `embed`, `popout`, `mobile_web`. `autoplay` (360p) is only a last-resort/fast-path backup in vaft and is never pinned.
 - Overlay hiding: only exact attribute selectors with no parent walking (currently `[data-test-selector="sda-wrapper"]`). Broader hides (`.player-overlay-background`, ad-break text match) were removed for hiding real UI.
@@ -89,6 +89,7 @@ Functions serialized with `.toString()` into the worker blob cannot reference ou
 
 ## Current state (2026-11-25)
 
+- Unreleased on master once merged: vaft 68.5.46 adds `[AD DEBUG]` console lines to the bug report and diagnostics export.
 - Latest release v68.5.45 (PR 72): vaft ports from the Helli24 fork. Previous: v68.5.44 (PRs 65-69) sync guard tests, video-swap-new audio-only backup merge fix, vaft post-reload pinned-backup probe fix.
 - PR #70 merged after v68.5.44: release workflow split into read-only `build` and write-only `publish` jobs, actions pinned to commit SHAs.- Open PR #57: Dependabot bump of @playwright/test 1.64.1 -> 1.65.1.
 - Decided: keep `@updateURL`/`@downloadURL` and README install links on `raw/master`, not release asset links.
