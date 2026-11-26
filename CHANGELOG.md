@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Remove the "Violentmonkey test" copy of vaft (`vaft/vaft-violentmonkey.user.js`) and its test-harness, browser-fixture and lint-baseline entries. It duplicated `vaft/vaft.user.js` apart from its name and install-method label, and its update URL already pointed at `vaft.user.js`, so existing installs keep updating from the standard script. Violentmonkey users install `vaft/vaft.user.js` as the README describes. Document the Brave helper and the remaining vaft `localStorage` settings in the README. Evidence classification: repository-only change. Script versions are unchanged.
+
 ## v68.5.44 (2026-11-25)
 
 - Fix video-swap-new's backup merge on masters that list an audio-only variant. The merge looked up every `#EXT-X-STREAM-INF` URL in the main stream's resolution map, but variants without `RESOLUTION` (Twitch's `audio_only`) are never stored there, so `getStreamUrlForResolution` threw on `undefined`. The error was caught and logged, `BackupEncodings` was never set, each later poll spent another player type, and once all failed the break fell back to stripping. The merge now skips variants it has no resolution for. Evidence classification: reproduced from a captured response (both 2026-10-16 popout captures list `audio_only`); no live ad-break playback validation is claimed.
