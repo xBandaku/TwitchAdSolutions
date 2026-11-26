@@ -37,7 +37,7 @@ twitch-videoad.js text/javascript
         }
     }
     'use strict';
-    const ourTwitchAdSolutionsVersion = 133;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 134;// Used to prevent conflicts with outdated versions of the scripts
     const TAS_INSTALL_METHOD = 'uBlock Origin';
     tasLog('[AD DEBUG] TwitchAdSolutions vaft v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
@@ -2738,7 +2738,16 @@ twitch-videoad.js text/javascript
                 playerBufferState.wedgeActions = 0;
             }
             playerBufferState.wedgePrevInAdBreak = wedgeInAd;
-            if (!DisablePostBreakWedge && !wedgeInAd && (playerBufferState.wedgeEvalsRemaining || 0) > 0
+            // Chrome stops decoding video for a hidden page (outside Picture-in-Picture) while audio and
+            // currentTime keep going, which looks exactly like a wedge (#74). Skip those ticks and drop the
+            // baseline, so the first visible tick does not compare frames across the hidden span.
+            const wedgePageHidden = typeof document !== 'undefined' && document.hidden && !document.pictureInPictureElement;
+            if (wedgePageHidden) {
+                playerBufferState.wedgeLastTime = -1;
+                playerBufferState.wedgeLastFrames = -1;
+                playerBufferState.wedgeEvidence = 0;
+            }
+            if (!DisablePostBreakWedge && !wedgeInAd && !wedgePageHidden && (playerBufferState.wedgeEvalsRemaining || 0) > 0
                 && !playerBufferState.userPauseIntent && playerForMonitoringBuffering
                 && playerForMonitoringBuffering.state?.props?.content?.type === 'live') {
                 try {
@@ -3767,7 +3776,7 @@ twitch-videoad.js text/javascript
     }
     function getTASDiagnosticState() {
         if (typeof window === 'undefined') return null;
-        return window.__tasDiagnostics || (window.__tasDiagnostics = { script: 'vaft', version: '68.5.48',
+        return window.__tasDiagnostics || (window.__tasDiagnostics = { script: 'vaft', version: '68.5.49',
             startedAt: Date.now(), events: [], current: { backup: 'none', quality: 'unknown', recovery: 'none', inAdBreak: false }, render() {} });
     }
     function getTASDiagnostics() {
@@ -4302,7 +4311,7 @@ twitch-videoad.js text/javascript
         window.twitchAdSolutionsTools = { openSettings: show, diagnostics: getTASDiagnostics };
     }
     function onContentLoaded() {
-        initializeTASControls('vaft', '68.5.48');
+        initializeTASControls('vaft', '68.5.49');
         if (document.getElementById('seventv-extension')) {
             tasLog('[AD DEBUG] Warning: 7TV extension detected — may cause black screen or buffering issues. If you experience problems, try disabling 7TV.');
         }

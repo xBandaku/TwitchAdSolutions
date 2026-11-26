@@ -101,7 +101,55 @@ function monitorHarness(file, hasPlayed = true) {
     return h;
 }
 
+function wedgeHarness(file) {
+    const h = monitorHarness(file);
+    h.context.DisablePostBreakWedge = false;
+    h.frames = 100;
+    Object.assign(h.current.player.video, { videoWidth: 1280, getVideoPlaybackQuality: () => ({ totalVideoFrames: h.frames }) });
+    // Advance the playhead each tick, as running audio does, while the frame count stays flat.
+    h.tick = (count, delay) => {
+        for (let i = 0; i < count; i++) {
+            h.current.player.video.currentTime += delay / 1000;
+            h.advance(delay);
+        }
+    };
+    h.context.playerBufferState.inAdBreak = true;
+    h.tick(1, 600);
+    h.context.playerBufferState.inAdBreak = false;
+    h.tick(1, 600);
+    return h;
+}
+
 for (const file of files) {
+    test('synthetic resilience: ' + file + ' post-break wedge check ignores frames Chrome does not decode on a hidden page (#74)', () => {
+        const h = wedgeHarness(file);
+        h.context.document.hidden = true;
+        h.tick(20, 1800);
+        assert.equal(h.context.playerBufferState.wedgeActions || 0, 0, 'flat frames on a hidden page are not a wedge');
+        assert.equal(h.current.player.plays, 0);
+        assert.equal(h.reloads.length, 0);
+    });
+
+    test('synthetic resilience: ' + file + ' post-break wedge check rebaselines after the page becomes visible', () => {
+        const h = wedgeHarness(file);
+        h.context.document.hidden = true;
+        h.tick(5, 1800);
+        h.context.document.hidden = false;
+        // One tick sets the baseline, then six ticks of flat frames are needed for a nudge.
+        h.tick(6, 600);
+        assert.equal(h.context.playerBufferState.wedgeActions || 0, 0, 'the hidden span must not count as evidence');
+        h.tick(1, 600);
+        assert.equal(h.context.playerBufferState.wedgeActions, 1, 'a real wedge after the page is shown is still detected');
+    });
+
+    test('synthetic resilience: ' + file + ' post-break wedge check still runs in Picture-in-Picture', () => {
+        const h = wedgeHarness(file);
+        h.context.document.hidden = true;
+        h.context.document.pictureInPictureElement = {};
+        h.tick(10, 600);
+        assert.equal(h.context.playerBufferState.wedgeActions, 1);
+    });
+
     test('synthetic resilience: ' + file + ' pause ownership clears a Twitch pause while its logical player is playing', () => {
         const h = monitorHarness(file);
         h.current.player.isPaused = () => false;
