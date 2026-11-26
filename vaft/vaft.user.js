@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TwitchAdSolutions (vaft)
 // @namespace    https://github.com/ryanbr/TwitchAdSolutions
-// @version      68.5.46
+// @version      68.5.47
 // @description  Multiple solutions for blocking Twitch ads (vaft)
 // @updateURL    https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft.user.js
 // @downloadURL  https://github.com/xBandaku/TwitchAdSolutions/raw/master/vaft/vaft.user.js
@@ -48,7 +48,7 @@
         }
     }
     'use strict';
-    const ourTwitchAdSolutionsVersion = 131;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 132;// Used to prevent conflicts with outdated versions of the scripts
     const TAS_INSTALL_METHOD = 'userscript';
     tasLog('[AD DEBUG] TwitchAdSolutions vaft v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
@@ -2216,7 +2216,9 @@
                 streamInfo.LoggedEarlyReloadSkipThisBreak = false;
                 // A no-strip break needs a reset only if backup playback changed the media source.
                 if (!hadStrippedSegments) {
-                    tasLog('[AD DEBUG] CSAI-only ad break (stripped 0) — clearing backup without player action');
+                    tasLog(streamInfo.LastCommittedBackupPlayerType
+                        ? '[AD DEBUG] No ad segments stripped — the ' + streamInfo.LastCommittedBackupPlayerType + ' backup covered the break'
+                        : '[AD DEBUG] CSAI-only ad break (stripped 0) — clearing backup without player action');
                     streamInfo.IsUsingModifiedM3U8 = false;
                     // Exception: if ANY backup was committed during this break (escape hatch
                     // or cycle rescue that didn't meet cycleRescuedCleanly criteria), the
@@ -2429,6 +2431,7 @@
         channelName: null,
         hasStreamStarted: false,
         position: 0,
+        positionAt: 0,
         bufferedPosition: 0,
         bufferDuration: 0,
         numSame: 0,
@@ -2731,12 +2734,16 @@
                         // operates on currentTime which is already at live edge. Rate-limit collapses the spam to a
                         // single drift attempt per 30s window, leaving real-drift paths (buffer-gap seek, post-reload)
                         // unaffected since they call startDriftCorrection() directly without going through this detector.
-                        if (playerBufferState.position > 0 && position - playerBufferState.position > 5 && !playerBufferState.inAdBreak && (!playerBufferState.lastBackupSwitchAt || Date.now() - playerBufferState.lastBackupSwitchAt >= 10000) && (!playerBufferState.lastDriftStartedAt || Date.now() - playerBufferState.lastDriftStartedAt >= 30000)) {
-                            tasLog('[AD DEBUG] Position jumped ' + (position - playerBufferState.position).toFixed(1) + 's — starting drift correction');
+                        // Compare against wall time: a hidden tab's timers can run once a minute, and
+                        // a minute of normal playback between ticks is not a jump (#74).
+                        const positionGain = position - playerBufferState.position - (Date.now() - playerBufferState.positionAt) / 1000;
+                        if (playerBufferState.position > 0 && positionGain > 5 && !playerBufferState.inAdBreak && (!playerBufferState.lastBackupSwitchAt || Date.now() - playerBufferState.lastBackupSwitchAt >= 10000) && (!playerBufferState.lastDriftStartedAt || Date.now() - playerBufferState.lastDriftStartedAt >= 30000)) {
+                            tasLog('[AD DEBUG] Position jumped ' + positionGain.toFixed(1) + 's — starting drift correction');
                             startDriftCorrection(player.getHTMLVideoElement?.());
                             playerBufferState.lastDriftStartedAt = Date.now();
                         }
                         playerBufferState.position = position;
+                        playerBufferState.positionAt = Date.now();
                         playerBufferState.videoCurrentTime = videoCurrentTime;
                         playerBufferState.bufferedPosition = bufferedPosition;
                         playerBufferState.bufferDuration = bufferDuration;
@@ -3389,6 +3396,8 @@
             let deadline = 0, observedVideo = null, initialTime = 0, playedVideo = null;
             let settingsAfterReload, preMutedVideo = null;
             let hardReload = forcesReset && !iosSoftReload;
+            // Decided per attempt: whether this attempt actually builds a new player instance.
+            let newInstance = false;
             let refreshToken = forcesReset;
             request.upgrade = () => {
                 if (refreshToken) return;
@@ -3503,11 +3512,16 @@
                 playerBufferState.adStallStartAt = 0;
                 playerBufferState.weJustPaused = Date.now();
                 playerForMonitoringBuffering = null;
-                tasLog('[AD DEBUG] Reloading Twitch player (' + (hardReload ? 'hard' : 'soft') + ', attempt ' + attempt + '/' + maxAttempts + ')');
-                recordTASDiagnostic({ event: 'reload-start', attempt, hardReload });
+                // A new player instance built while the tab is hidden starts pre-muted and stays
+                // stopped until the tab is shown again, so a background listener loses the stream
+                // (#74). Keep the playing instance there; the token is still refreshed.
+                newInstance = hardReload && !document.hidden;
+                const mode = newInstance ? 'hard' : (hardReload ? 'soft, tab hidden' : 'soft');
+                tasLog('[AD DEBUG] Reloading Twitch player (' + mode + ', attempt ' + attempt + '/' + maxAttempts + ')');
+                recordTASDiagnostic({ event: 'reload-start', attempt, hardReload: newInstance });
                 prepareMute();
                 try {
-                    current.state.setSrc({ isNewMediaPlayerInstance: hardReload, refreshAccessToken: refreshToken });
+                    current.state.setSrc({ isNewMediaPlayerInstance: newInstance, refreshAccessToken: refreshToken });
                 } catch (error) {
                     tasLog('[AD DEBUG] Player reload failed: ' + error.message);
                     finish(false, 'exception');
@@ -3530,7 +3544,7 @@
                 tasLog('[AD DEBUG] Could not preserve player settings: ' + error.message);
             }
             const prepareMute = () => {
-                if (!hardReload) return;
+                if (!newInstance) return;
                 const video = getPlayerAndState()?.player?.getHTMLVideoElement?.();
                 const shouldRecover = playerBufferState.vaftEverUnmuted && RecoverFromSilentMute;
                 if (video && (!video.muted || shouldRecover) && !snapshot.get('video-muted')?.includes('"default":true') && !muteWasChanged()) {
@@ -3570,7 +3584,7 @@
                 if (video?.buffered.length > 0 && video.readyState >= 3) {
                     const liveEdge = video.buffered.end(video.buffered.length - 1);
                     const drift = liveEdge - video.currentTime;
-                    if (hardReload && drift > 5 && Number.isFinite(liveEdge) && liveEdge < 3600) {
+                    if (newInstance && drift > 5 && Number.isFinite(liveEdge) && liveEdge < 3600) {
                         video.currentTime = liveEdge;
                     } else if (drift > 2) {
                         startDriftCorrection(video);
@@ -3787,7 +3801,7 @@
     }
     function getTASDiagnosticState() {
         if (typeof window === 'undefined') return null;
-        return window.__tasDiagnostics || (window.__tasDiagnostics = { script: 'vaft', version: '68.5.46',
+        return window.__tasDiagnostics || (window.__tasDiagnostics = { script: 'vaft', version: '68.5.47',
             startedAt: Date.now(), events: [], current: { backup: 'none', quality: 'unknown', recovery: 'none', inAdBreak: false }, render() {} });
     }
     function getTASDiagnostics() {
@@ -4322,7 +4336,7 @@
         window.twitchAdSolutionsTools = { openSettings: show, diagnostics: getTASDiagnostics };
     }
     function onContentLoaded() {
-        initializeTASControls('vaft', '68.5.46');
+        initializeTASControls('vaft', '68.5.47');
         if (document.getElementById('seventv-extension')) {
             tasLog('[AD DEBUG] Warning: 7TV extension detected — may cause black screen or buffering issues. If you experience problems, try disabling 7TV.');
         }

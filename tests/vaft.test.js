@@ -181,6 +181,21 @@ for (const file of files) {
         });
     }
 
+    test('synthetic resilience: ' + file + ' measures position jumps against elapsed time (#74)', () => {
+        for (const [gainSec, elapsedMs, expected] of [[60, 60000, 0], [60, 0, 1]]) {
+            const h = monitorHarness(file);
+            let corrections = 0;
+            h.context.startDriftCorrection = () => corrections++;
+            const state = h.context.playerBufferState;
+            assert.ok(state.position > 0, 'harness should have recorded a position');
+            state.positionAt -= elapsedMs;
+            h.current.player.core.state.position = state.position + gainSec;
+            h.current.player.video.currentTime += gainSec;
+            h.context.monitorPlayerBuffering();
+            assert.equal(corrections, expected, gainSec + 's gained over ' + elapsedMs + 'ms');
+        }
+    });
+
     test('synthetic resilience: ' + file + ' reconciles a late logical resume and does not treat typing as pause input', () => {
         const h = monitorHarness(file);
         h.current.player.isPaused = () => true;
@@ -745,6 +760,25 @@ for (const file of files) {
         h.context.doTwitchPlayerTask(false, true, 'early');
         h.advance(150);
         assert.equal(h.reloads[1].isNewMediaPlayerInstance, false);
+        assert.equal(h.reloads[1].refreshAccessToken, true);
+        h.context.doTwitchPlayerTask.recovery.cancel();
+        assert.equal(await pending, false);
+    });
+
+    test('synthetic resilience: ' + file + ' keeps the playing player while the tab is hidden (#74)', async () => {
+        const h = recoveryHarness(file);
+        h.context.document.hidden = true;
+        h.current.player.video.muted = false;
+        const pending = h.context.doTwitchPlayerTask(false, true, 'early');
+        assert.equal(h.reloads.length, 1);
+        assert.equal(h.reloads[0].isNewMediaPlayerInstance, false);
+        assert.equal(h.reloads[0].refreshAccessToken, true);
+        assert.equal(h.current.player.video.muted, false, 'a hidden-tab reload must not pre-mute the playing video');
+        h.advance(5900);
+        assert.equal(h.reloads.length, 1);
+        h.context.document.hidden = false;
+        h.advance(150);
+        assert.equal(h.reloads[1].isNewMediaPlayerInstance, true, 'once the tab is shown again the next attempt replaces the player');
         assert.equal(h.reloads[1].refreshAccessToken, true);
         h.context.doTwitchPlayerTask.recovery.cancel();
         assert.equal(await pending, false);
