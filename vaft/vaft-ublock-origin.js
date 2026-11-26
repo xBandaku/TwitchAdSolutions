@@ -37,7 +37,7 @@ twitch-videoad.js text/javascript
         }
     }
     'use strict';
-    const ourTwitchAdSolutionsVersion = 132;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 133;// Used to prevent conflicts with outdated versions of the scripts
     const TAS_INSTALL_METHOD = 'uBlock Origin';
     tasLog('[AD DEBUG] TwitchAdSolutions vaft v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
@@ -3216,11 +3216,47 @@ twitch-videoad.js text/javascript
         }, 3000);
     }
     // Pause/play or fully reload the Twitch player, preserving quality/volume settings
+    function deferTwitchPlayerTask(isPausePlay, isReload, reloadKind, forcesReset) {
+        const pending = deferTwitchPlayerTask.pending;
+        // Keep the strongest request: a forced reset beats a plain reload, which beats pause/play.
+        const rank = forcesReset ? 2 : isReload ? 1 : 0;
+        if (!pending || rank > pending.rank) {
+            if (!pending) tasLog('[AD DEBUG] Page hidden — deferring player ' + (isReload ? 'reload (' + (reloadKind || 'normal') + ')' : 'pause/play') + ' until visible');
+            deferTwitchPlayerTask.pending = { isPausePlay, isReload, reloadKind, rank, channel: getPlaybackChannelName(getPlayerAndState()) || null };
+        }
+        if (deferTwitchPlayerTask.hooked) return;
+        deferTwitchPlayerTask.hooked = true;
+        document.addEventListener('visibilitychange', () => {
+            const task = deferTwitchPlayerTask.pending;
+            if (document.hidden || !task) return;
+            deferTwitchPlayerTask.pending = null;
+            recordTASDiagnostic({ event: 'deferred-task', reason: task.reloadKind || (task.isReload ? 'normal' : 'pause-play') });
+            // A break that started while hidden requests its own reload when it ends.
+            if (playerBufferState.inAdBreak) {
+                tasLog('[AD DEBUG] Dropped deferred player task — an ad break is active');
+                return;
+            }
+            const channel = getPlaybackChannelName(getPlayerAndState()) || null;
+            if (task.channel && channel && task.channel !== channel) {
+                tasLog('[AD DEBUG] Dropped deferred player task — channel changed');
+                return;
+            }
+            tasLog('[AD DEBUG] Page visible — running deferred player task');
+            doTwitchPlayerTask(task.isPausePlay, task.isReload, task.reloadKind);
+        });
+    }
     function doTwitchPlayerTask(isPausePlay, isReload, reloadKind) {
         // These kinds need a new player and token even when playback looks healthy: the playing
         // stream itself is the problem (unfiltered by an unhooked worker or an unregistered playlist).
         const forcesReset = isReload && ['early', 'worker-recovery', 'untracked-ads'].includes(reloadKind);
         if (isReload || isPausePlay) recordTASDiagnostic({ event: isReload ? 'reload-request' : 'pause-play', reason: reloadKind || 'normal' });
+        // Twitch leaves a restarted live player Idle with no source while the page is hidden, and
+        // play() does not wake it (issue #74, live Chrome repro). A pause/play restarts a live stream
+        // too. The stream keeps playing if left alone, so run the task once the page is visible again.
+        if ((isReload || isPausePlay) && document.hidden) {
+            deferTwitchPlayerTask(isPausePlay, isReload, reloadKind, forcesReset);
+            return;
+        }
         const active = doTwitchPlayerTask.recovery;
         if (active) {
             if (active.isCurrent()) {
@@ -3731,7 +3767,7 @@ twitch-videoad.js text/javascript
     }
     function getTASDiagnosticState() {
         if (typeof window === 'undefined') return null;
-        return window.__tasDiagnostics || (window.__tasDiagnostics = { script: 'vaft', version: '68.5.47',
+        return window.__tasDiagnostics || (window.__tasDiagnostics = { script: 'vaft', version: '68.5.48',
             startedAt: Date.now(), events: [], current: { backup: 'none', quality: 'unknown', recovery: 'none', inAdBreak: false }, render() {} });
     }
     function getTASDiagnostics() {
@@ -4266,7 +4302,7 @@ twitch-videoad.js text/javascript
         window.twitchAdSolutionsTools = { openSettings: show, diagnostics: getTASDiagnostics };
     }
     function onContentLoaded() {
-        initializeTASControls('vaft', '68.5.47');
+        initializeTASControls('vaft', '68.5.48');
         if (document.getElementById('seventv-extension')) {
             tasLog('[AD DEBUG] Warning: 7TV extension detected — may cause black screen or buffering issues. If you experience problems, try disabling 7TV.');
         }

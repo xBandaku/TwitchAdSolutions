@@ -368,6 +368,46 @@ for (const file of files) {
         h.context.doTwitchPlayerTask.recovery.cancel();
     });
 
+    test('synthetic resilience: ' + file + ' defers a hidden-page reset until the page is visible', () => {
+        const h = recoveryHarness(file);
+        h.context.document.hidden = true;
+        h.context.doTwitchPlayerTask(false, true, 'early');
+        h.advance(10000);
+        assert.equal(h.reloads.length, 0);
+        assert.equal(h.current.player.video.paused, false);
+        h.context.document.hidden = false;
+        h.listeners.get('visibilitychange')();
+        assert.equal(h.reloads.length, 1);
+        assert.equal(h.reloads[0].isNewMediaPlayerInstance, true);
+        assert.equal(h.reloads[0].refreshAccessToken, true);
+        h.context.doTwitchPlayerTask.recovery.cancel();
+    });
+
+    test('synthetic resilience: ' + file + ' keeps the strongest deferred task and skips pause/play while hidden', () => {
+        const h = recoveryHarness(file);
+        h.context.document.hidden = true;
+        h.context.doTwitchPlayerTask(true, false);
+        h.context.doTwitchPlayerTask(false, true, 'early');
+        h.context.doTwitchPlayerTask(true, false);
+        assert.equal(h.current.player.plays, 0);
+        assert.equal(h.current.player.video.paused, false);
+        h.context.document.hidden = false;
+        h.listeners.get('visibilitychange')();
+        assert.equal(h.reloads.length, 1);
+        assert.equal(h.reloads[0].refreshAccessToken, true);
+        h.context.doTwitchPlayerTask.recovery.cancel();
+    });
+
+    test('synthetic resilience: ' + file + ' drops a deferred reset when an ad break is active on return', () => {
+        const h = recoveryHarness(file);
+        h.context.document.hidden = true;
+        h.context.doTwitchPlayerTask(false, true, 'early');
+        h.context.playerBufferState.inAdBreak = true;
+        h.context.document.hidden = false;
+        h.listeners.get('visibilitychange')();
+        assert.equal(h.reloads.length, 0);
+    });
+
     test('synthetic resilience: ' + file + ' starts a required reset despite stale paused internals', () => {
         const h = recoveryHarness(file);
         h.current.player.video.paused = true;
@@ -765,21 +805,19 @@ for (const file of files) {
         assert.equal(await pending, false);
     });
 
-    test('synthetic resilience: ' + file + ' keeps the playing player while the tab is hidden (#74)', async () => {
+    test('synthetic resilience: ' + file + ' keeps the playing player when a recovery attempt starts after the tab is hidden (#74)', async () => {
         const h = recoveryHarness(file);
-        h.context.document.hidden = true;
-        h.current.player.video.muted = false;
         const pending = h.context.doTwitchPlayerTask(false, true, 'early');
         assert.equal(h.reloads.length, 1);
-        assert.equal(h.reloads[0].isNewMediaPlayerInstance, false);
-        assert.equal(h.reloads[0].refreshAccessToken, true);
-        assert.equal(h.current.player.video.muted, false, 'a hidden-tab reload must not pre-mute the playing video');
-        h.advance(5900);
-        assert.equal(h.reloads.length, 1);
-        h.context.document.hidden = false;
-        h.advance(150);
-        assert.equal(h.reloads[1].isNewMediaPlayerInstance, true, 'once the tab is shown again the next attempt replaces the player');
+        assert.equal(h.reloads[0].isNewMediaPlayerInstance, true);
+        h.context.document.hidden = true;
+        h.advance(4500);
+        h.current.player.video.muted = false;
+        h.advance(1600);
+        assert.equal(h.reloads.length, 2);
+        assert.equal(h.reloads[1].isNewMediaPlayerInstance, false, 'an attempt that starts while hidden keeps the playing player');
         assert.equal(h.reloads[1].refreshAccessToken, true);
+        assert.equal(h.current.player.video.muted, false, 'a hidden-tab attempt must not pre-mute the playing video');
         h.context.doTwitchPlayerTask.recovery.cancel();
         assert.equal(await pending, false);
     });
