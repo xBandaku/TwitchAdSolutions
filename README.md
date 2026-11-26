@@ -177,4 +177,6 @@ This command requires the selected tests to fail before the fix with the expecte
 
 Fork of [ryanbr/TwitchAdSolutions](https://github.com/ryanbr/TwitchAdSolutions), originally based on [pixeltris/TwitchAdSolutions](https://github.com/pixeltris/TwitchAdSolutions).
 
+Several vaft fixes were ported from [Helli24/TwitchAdSolutions](https://github.com/Helli24/TwitchAdSolutions) by [@Helli24](https://github.com/Helli24): backup media-sequence alignment, unhooked-worker and unregistered-playlist recovery, and kept ad-laden backup sessions.
+
 [MIT](LICENSE). See [releases](https://github.com/xBandaku/TwitchAdSolutions/releases) for versioned downloads and [CHANGELOG.md](CHANGELOG.md) for release history.
