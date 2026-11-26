@@ -89,9 +89,8 @@ Functions serialized with `.toString()` into the worker blob cannot reference ou
 
 ## Current state (2026-11-25)
 
-- Latest release v68.5.44 (PRs 65-69): version/uBlock sync guard tests, video-swap-new audio-only backup merge fix, vaft post-reload pinned-backup probe fix.
+- Latest release v68.5.45 (PR 72): vaft ports from the Helli24 fork. Previous: v68.5.44 (PRs 65-69) sync guard tests, video-swap-new audio-only backup merge fix, vaft post-reload pinned-backup probe fix.
 - PR #70 merged after v68.5.44: release workflow split into read-only `build` and write-only `publish` jobs, actions pinned to commit SHAs.- Open PR #57: Dependabot bump of @playwright/test 1.64.1 -> 1.65.1.
-- vaft 68.5.45 in Unreleased: ports from the Helli24 fork (backup media-sequence alignment, unhooked-worker and unregistered-playlist reloads, kept ad-laden backup sessions). Fork survey notes: rrro0orrr and Helli24 are the only forks with fixes worth taking.
 - Decided: keep `@updateURL`/`@downloadURL` and README install links on `raw/master`, not release asset links.
 - Suggested, not done: branch protection "include administrators" (owner's setting).
 - The "Violentmonkey test" copy (`vaft/vaft-violentmonkey.user.js`) was removed with its test-harness entries; Violentmonkey users install `vaft/vaft.user.js`.
