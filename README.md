@@ -60,6 +60,9 @@ To uninstall, remove the filter and this resource URL. Set `userResourcesLocatio
 | --- | --- | --- |
 | vaft (recommended) | [Install](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/master/vaft/vaft.user.js) | [Resource](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/master/vaft/vaft-ublock-origin.js) |
 | video-swap-new | [Install](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/master/video-swap-new/video-swap-new.user.js) | [Resource](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/master/video-swap-new/video-swap-new-ublock-origin.js) |
+| twitch-brave-fix (Brave only, add alongside vaft or video-swap-new) | [Install](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/master/vaft/twitch-brave-fix.user.js) | [Resource](https://raw.githubusercontent.com/xBandaku/TwitchAdSolutions/master/vaft/twitch-brave-fix-ublock-origin.js) |
+
+The Brave helper works around Brave fingerprint detection on Twitch requests and skips installation on other browsers. Its uBlock Origin version covers only the JavaScript spoofs; retrying rejected requests with rewritten headers needs the userscript.
 
 ## Configuration
 
@@ -79,7 +82,9 @@ Worker interception status is **confirmed** when the active worker acknowledges 
 
 Request outcomes distinguish token API errors, HTTP failures, invalid playlist/token responses, and network, body-read or timeout failures for observed token and playlist requests. Timing and readable HTTP status are included. A valid playlist response does not prove segment delivery or playback, and a network error does not identify whether the browser, an extension or the network blocked it. No extra diagnostic network requests are sent.
 
-**Export diagnostics** downloads the event log. **Generate bug report** creates a ready-to-paste report using the repository's issue-template headings, including the current playback snapshot and recent events. Fill in the browser, extension, console, and troubleshooting details that the script cannot know, then review and **Copy report** to share it manually. Reports are never sent automatically and omit channel names, playlist URLs, tokens, and request headers. Events describe observed requests and state; they do not prove playback recovered.
+**Export diagnostics** downloads the event log. **Generate bug report** creates a ready-to-paste report using the repository's issue-template headings, including the current playback snapshot and recent events. Fill in the browser, extension, and troubleshooting details that the script cannot know, then review and **Copy report** to share it manually. Reports are never sent automatically and omit playlist URLs and request headers. Events describe observed requests and state; they do not prove playback recovered.
+
+In vaft, the report's **Console output** section holds the last 50 `[AD DEBUG]` lines from the page and the video worker, with their time since page load. vaft keeps the newest 150 lines in memory, and **Export diagnostics** includes all of them as `consoleLog`. Before a line goes into a report or export, channel names, URL paths and query strings, blob URLs, OAuth and JWT tokens, signature/token values, and opaque strings of 32 or more characters are replaced with placeholders. The browser console itself still shows the full lines. Check the lines before sharing, since an unusual message could still contain something personal. Lines logged before the settings panel loads are not captured if vaft exits early (nested frames, the clip editor, or a duplicate script).
 
 ### Settings backup
 
@@ -109,6 +114,17 @@ localStorage.removeItem('twitchAdSolutions_hideAdOverlay');
 | `disableReloadCap` | Unset; vaft only | Set to `true` to allow repeated buffer-monitor reloads. This can cause reload loops. |
 | `preferLowQualityBackup` | `true`; vaft only | Allow the 360p autoplay fallback, including recovery from stalled ad stripping. Set to `false` to disable both. |
 | `backupSwapFirst` | `true`; vaft only | Try backup streams first. Set to `false` to strip ad segments first. |
+| `earlyReloadPollThreshold` | vaft: `3`; video-swap-new: `5` | Polls (about 2 seconds each) of fully stripped playback before an early reload. Set to `0` to disable. |
+| `driftCorrectionRate` | `1.1`; vaft only | Playback rate used to catch up to live after a reload. Set to `0` to disable. |
+| `fastAutoplayFirstTry` | `true`; vaft only | Try the 360p autoplay backup first when the previous break ended on it. Set to `false` to probe Source-quality backups every break. |
+| `recoverFromSilentMute` | `true`; vaft only | Unmute after a reload if you had unmuted earlier in the session. Set to `false` to keep a mute across reloads. |
+| `disableAdSpoofing` | `true`; vaft only | Ad-tracking beacons are not sent. Set to `false` to send them. |
+| `disablePostBreakWedge` | Unset; vaft only | Set to `true` to turn off recovery for frozen video with running audio after a break. |
+| `iosSoftReload` | `true`; vaft only | On Apple touch devices, keep the existing player when reloading. Set to `false` to replace it. |
+| `alignBackupSequence` | `true`; vaft only | Renumber a backup stream's segments to match the live stream so the player does not skip them. Set to `false` to keep the backup's own numbering. |
+| `keepBackupSessions` | `true`; vaft only | Keep using an ad-laden backup stream for up to 60 seconds of ads instead of requesting a new one on every poll, since each new one starts with its own preroll. Set to `false` to request a new one every time. |
+| `untrackedReload` | `true`; vaft only | Reload the player (at most twice in 10 minutes) when a live playlist vaft never registered carries ads. Set to `false` to disable. |
+| `unhookedPageReload` | `true`; vaft only | When the player was created before vaft loaded and a player reload does not fix it, reload the page once (at most every 10 minutes per tab). Set to `false` to only log it. |
 
 During an autoplay backup, Twitch's quality menu can still show Source while playback is at 360p. Vaft attempts to restore full quality when the break ends.
 
@@ -162,5 +178,7 @@ This command requires the selected tests to fail before the fix with the expecte
 ## Credits and license
 
 Fork of [ryanbr/TwitchAdSolutions](https://github.com/ryanbr/TwitchAdSolutions), originally based on [pixeltris/TwitchAdSolutions](https://github.com/pixeltris/TwitchAdSolutions).
+
+Several vaft fixes were ported from [Helli24/TwitchAdSolutions](https://github.com/Helli24/TwitchAdSolutions) by [@Helli24](https://github.com/Helli24): backup media-sequence alignment, unhooked-worker and unregistered-playlist recovery, and kept ad-laden backup sessions.
 
 [MIT](LICENSE). See [releases](https://github.com/xBandaku/TwitchAdSolutions/releases) for versioned downloads and [CHANGELOG.md](CHANGELOG.md) for release history.

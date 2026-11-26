@@ -30,9 +30,9 @@ jobs:
         os: [ubuntu-latest, windows-latest]
         node: ['22', '24']
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-    - uses: actions/setup-node@v7
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: ${{ matrix.node }}
         cache: npm
@@ -49,7 +49,7 @@ jobs:
 
     - name: Upload installable artifacts and checksums
       if: matrix.os == 'ubuntu-latest' && matrix.node == '24'
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: scripts-${{ github.sha }}
         path: release-artifact/
@@ -61,7 +61,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
     - name: Validate every workflow with actionlint
       env:
         GH_TOKEN: ${{ github.token }}
@@ -72,8 +72,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-    - uses: actions/checkout@v7
-    - uses: actions/setup-node@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: '24'
         cache: npm
@@ -91,8 +91,8 @@ jobs:
       matrix:
         browser: [chromium, firefox, webkit]
     steps:
-    - uses: actions/checkout@v7
-    - uses: actions/setup-node@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: '24'
         cache: npm
@@ -103,7 +103,7 @@ jobs:
       run: npm run test:browser -- --project=${{ matrix.browser }}
     - name: Upload browser reports and failure traces
       if: ${{ !cancelled() }}
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: browser-results-${{ matrix.browser }}
         path: |

@@ -1122,6 +1122,37 @@ for (const file of files) {
         assert.ok(tokens > 2);
     });
 
+    test('synthetic resilience: ' + file + ' probes the pinned backup first right after a reload and never pins an ad-laden pick', async () => {
+        const marked = clean.replace('#EXT-X-TARGETDURATION', '#EXT-X-DATERANGE:CLASS="twitch-trigger"\n#EXT-X-TARGETDURATION');
+        for (const [pinned, cleanTypes, expectedType, expectedPin] of [
+            ['popout', ['popout'], 'popout', 'popout'],
+            [null, [], 'site', null]
+        ]) {
+            const tokens = [];
+            const { context } = harness(file);
+            const { url, stream } = registerStream(context, {
+                IsShowingAd: true, HasConfirmedAdAttrs: true, PinnedBackupPlayerType: pinned, LastPlayerReload: Date.now()
+            });
+            context.getAccessToken = async (channel, type) => {
+                tokens.push(type);
+                return new Response(JSON.stringify({ data: { streamPlaybackAccessToken: { signature: 'fixture', value: type } } }));
+            };
+            const realFetch = async input => {
+                const requestUrl = new URL(String(input));
+                if (requestUrl.hostname === 'usher.ttvnw.net') {
+                    const type = requestUrl.searchParams.get('token');
+                    return new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=1920x1080,FRAME-RATE=60,CODECS="avc1.4d4028"\nhttps://fixture.invalid/' + type + '.m3u8\n');
+                }
+                const type = requestUrl.pathname.slice(1, -'.m3u8'.length);
+                return new Response(cleanTypes.includes(type) ? clean : marked);
+            };
+            await context.processM3U8(url, marked, realFetch);
+            assert.equal(tokens[0], pinned || 'site', 'first probe after a reload');
+            assert.equal(stream.ActiveBackupPlayerType, expectedType);
+            assert.equal(stream.PinnedBackupPlayerType, expectedPin);
+        }
+    });
+
     test('synthetic resilience: ' + file + ' processes query, v2 and relative media URLs from master playlists', async () => {
         for (const uri of ['https://fixture.invalid/index.m3u8?token=fixture', 'https://fixture.invalid/v1/chunked/stream', '../fixture/chunked?token=fixture']) {
             const masterUrl = 'https://usher.ttvnw.net/api/v2/channel/hls/fixture.m3u8?token=fixture';
@@ -1218,5 +1249,188 @@ for (const file of files) {
         const body = JSON.stringify({ operationName: 'PlaybackAccessToken', variables: { playerType: 'site' } });
         await window.fetch('https://gql.twitch.tv/gql', { method: 'POST', body });
         assert.equal(JSON.parse(calls.at(-1)[1].body).variables.playerType, context.ForceAccessTokenPlayerType);
+    });
+
+    // Backup fixture: every token request answers a master whose single variant is named after the
+    // player type, and media playlists come from playlistFor(type).
+    function backupFixture(context, playlistFor) {
+        const tokens = [];
+        context.getAccessToken = async (channel, type) => {
+            tokens.push(type);
+            return new Response(JSON.stringify({ data: { streamPlaybackAccessToken: { signature: 'fixture', value: type } } }));
+        };
+        const realFetch = async input => {
+            const requestUrl = new URL(String(input));
+            if (requestUrl.hostname === 'usher.ttvnw.net') {
+                const type = requestUrl.searchParams.get('token');
+                return new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=1920x1080,FRAME-RATE=60,CODECS="avc1.4d4028"\nhttps://fixture.invalid/' + type + '.m3u8\n');
+            }
+            return new Response(playlistFor(requestUrl.pathname.slice(1, -'.m3u8'.length)));
+        };
+        return { tokens, realFetch };
+    }
+    const markedLive = clean.replace('#EXT-X-TARGETDURATION', '#EXT-X-DATERANGE:CLASS="twitch-trigger"\n#EXT-X-TARGETDURATION');
+    const playlistAt = (sequence, newest, marker = '') => '#EXTM3U\n#EXT-X-TARGETDURATION:2\n' + marker + '#EXT-X-MEDIA-SEQUENCE:' + sequence + '\n'
+        + [2, 1, 0].map(back => '#EXT-X-PROGRAM-DATE-TIME:' + new Date(newest - back * 2000).toISOString() + '\n#EXTINF:2.000,live\nhttps://fixture.invalid/seg-' + (sequence + 2 - back) + '.ts\n').join('');
+
+    test('synthetic resilience: ' + file + ' renumbers a committed backup onto the native media sequence', async () => {
+        const newest = Date.parse('2026-11-25T12:00:00Z');
+        const native = playlistAt(10640, newest, '#EXT-X-DATERANGE:CLASS="twitch-stitched-ad"\n');
+        for (const align of [true, false]) {
+            const { context } = harness(file);
+            context.AlignBackupSequence = align;
+            const { url, stream } = registerStream(context, { IsShowingAd: true, HasConfirmedAdAttrs: true });
+            const { realFetch } = backupFixture(context, () => playlistAt(10630, newest));
+            const result = await context.processM3U8(url, native, realFetch);
+            assert.equal(stream.ActiveBackupPlayerType, 'site');
+            assert.match(result, align ? /#EXT-X-MEDIA-SEQUENCE:10640\n/ : /#EXT-X-MEDIA-SEQUENCE:10630\n/);
+            assert.equal(stream.BackupSequenceOffset, align ? 10 : null);
+        }
+        const { context } = harness(file);
+        assert.equal(context.getBackupSequenceOffset(playlistAt(100, newest), playlistAt(100, newest)).offset, 0);
+        assert.equal(context.getBackupSequenceOffset(clean, playlistAt(90, newest)).offset, 0, 'no PROGRAM-DATE-TIME means no shift');
+        // A preroll: native numbered from 0, so the backup's oldest segments would land below 0 and are dropped.
+        const shifted = context.shiftMediaSequence(playlistAt(13, newest).replace('#EXT-X-PROGRAM-DATE-TIME', '#EXT-X-DISCONTINUITY\n#EXT-X-PROGRAM-DATE-TIME'), -14);
+        assert.match(shifted, /#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-DISCONTINUITY-SEQUENCE:1\n/);
+        assert.deepEqual(shifted.split('\n').filter(line => line.startsWith('https:')), ['https://fixture.invalid/seg-14.ts', 'https://fixture.invalid/seg-15.ts']);
+    });
+
+    test('synthetic resilience: ' + file + ' keeps ad-laden backup sessions and the active type while every backup has ads', async () => {
+        for (const keep of [true, false]) {
+            let now = 100000;
+            const { context, messages } = harness(file, { Date: class extends Date { static now() { return now; } } });
+            context.KeepBackupSessions = keep;
+            const { url, stream } = registerStream(context, { IsShowingAd: true, HasConfirmedAdAttrs: true });
+            const { tokens, realFetch } = backupFixture(context, () => markedLive);
+            await context.processM3U8(url, markedLive, realFetch);
+            const active = stream.ActiveBackupPlayerType;
+            const firstTokens = tokens.length;
+            assert.ok(active);
+            assert.equal(stream.AllBackupsAdLaden, true);
+            now += 2000;
+            await context.processM3U8(url, markedLive, realFetch);
+            assert.equal(stream.ActiveBackupPlayerType, active, 'stays on the active ad-laden type');
+            if (keep) {
+                assert.equal(tokens.length, firstTokens, 'kept sessions need no new token');
+                now += 60000;
+                await context.processM3U8(url, markedLive, realFetch);
+                assert.ok(tokens.length > firstTokens, 'a session with 60s of ads is replaced');
+            } else {
+                assert.ok(tokens.length > firstTokens);
+            }
+            Object.assign(stream, { ConsecutiveAllStrippedPolls: 5, EarlyReloadTriggered: false, EarlyReloadCount: 0 });
+            messages.length = 0;
+            context.triggerEarlyReloadIfNeeded(stream);
+            assert.equal(messages.filter(message => message.key === 'ReloadPlayer').length, 0, 'no early reload while every backup has ads');
+            stream.AllBackupsAdLaden = false;
+            context.triggerEarlyReloadIfNeeded(stream);
+            assert.equal(messages.filter(message => message.key === 'ReloadPlayer').length, 1);
+        }
+    });
+
+    test('synthetic resilience: ' + file + ' probes a clean active backup before the fast-autoplay type', async () => {
+        const { context } = harness(file);
+        const { url, stream } = registerStream(context, {
+            IsShowingAd: true, HasConfirmedAdAttrs: true, ActiveBackupPlayerType: 'popout', ActiveBackupWasClean: true,
+            LastBreakUsedEscapeHatch: true
+        });
+        const { tokens, realFetch } = backupFixture(context, () => clean);
+        await context.processM3U8(url, markedLive, realFetch);
+        assert.equal(tokens[0], 'popout');
+        assert.equal(stream.ActiveBackupPlayerType, 'popout');
+    });
+
+    test('synthetic resilience: ' + file + ' reloads the player when an unregistered live playlist carries ads', async () => {
+        let now = 100000;
+        const { context, messages } = harness(file, { Date: class extends Date { static now() { return now; } } });
+        const reloads = () => messages.filter(message => message.key === 'ReloadPlayer' && message.kind === 'untracked-ads').length;
+        const unknown = 'https://fixture.invalid/unregistered.m3u8';
+        assert.equal(await context.processM3U8(unknown, markedLive, null), markedLive, 'the playlist itself still passes through');
+        assert.equal(reloads(), 1);
+        await context.processM3U8(unknown, markedLive, null);
+        assert.equal(reloads(), 1, 'one reload per 30s');
+        now += 31000;
+        await context.processM3U8(unknown, markedLive, null);
+        now += 31000;
+        await context.processM3U8(unknown, markedLive, null);
+        assert.equal(reloads(), 2, 'two reloads per 10 minutes');
+        now += 600000;
+        await context.processM3U8(unknown, clean, null);
+        await context.processM3U8(unknown, markedLive + '#EXT-X-ENDLIST\n', null);
+        context.PictureByPicturePlaylists.add(unknown);
+        await context.processM3U8(unknown, markedLive, null);
+        assert.equal(reloads(), 2, 'clean, VOD and picture-by-picture playlists never reload');
+        context.PictureByPicturePlaylists.clear();
+        context.UntrackedReload = false;
+        await context.processM3U8(unknown, markedLive, null);
+        assert.equal(reloads(), 2);
+    });
+
+    test('synthetic resilience: ' + file + ' replaces a healthy player for worker recovery and unregistered ads', async () => {
+        for (const kind of ['worker-recovery', 'untracked-ads']) {
+            const h = recoveryHarness(file), skipped = [];
+            h.context.postTwitchWorkerMessage = key => skipped.push(key);
+            Object.assign(h.current.player.video, { readyState: 4, seekable: { length: 1, end: () => 13 } });
+            const pending = h.context.doTwitchPlayerTask(false, true, kind);
+            assert.equal(h.reloads.length, 1, kind);
+            assert.equal(h.reloads[0].isNewMediaPlayerInstance, true);
+            assert.equal(h.reloads[0].refreshAccessToken, true);
+            assert.ok(!skipped.includes('ReloadSkipped'));
+            h.context.doTwitchPlayerTask.recovery.cancel();
+            assert.equal(await pending, false);
+        }
+    });
+
+    test('synthetic resilience: ' + file + ' recovers a player worker created before vaft loaded', () => {
+        const h = recoveryHarness(file), kinds = [];
+        h.context.twitchWorkers = [];
+        h.context.hookWindowWorker.workers = new WeakMap();
+        h.context.doTwitchPlayerTask = (isPausePlay, isReload, kind) => kinds.push(kind);
+        Object.assign(h.current.player.video, { readyState: 4, paused: false });
+        const tick = () => h.context.checkUnhookedPlayerWorker(h.current);
+        h.current.player.core.worker = { postMessage() {} };
+        tick();
+        h.advance(4900);
+        tick();
+        assert.deepEqual(kinds, [], 'waits 5s of playback');
+        h.advance(200);
+        tick();
+        assert.deepEqual(kinds, ['worker-recovery']);
+        h.current.player.core.worker = { postMessage() {} };
+        tick();
+        h.advance(5100);
+        tick();
+        assert.deepEqual(kinds, ['worker-recovery'], 'only one player reload');
+        assert.equal(h.pageRefreshes.length, 1, 'then one page reload');
+        assert.ok(h.session.get('twitchAdSolutions_unhookedPageReloadAt'));
+
+        const again = recoveryHarness(file);
+        again.session.set('twitchAdSolutions_unhookedPageReloadAt', '100000');
+        again.context.twitchWorkers = [];
+        again.context.hookWindowWorker.workers = new WeakMap();
+        again.context.doTwitchPlayerTask = () => {};
+        Object.assign(again.current.player.video, { readyState: 4, paused: false });
+        again.current.player.core.worker = { postMessage() {} };
+        for (let step = 0; step < 4; step++) {
+            again.context.checkUnhookedPlayerWorker(again.current);
+            again.advance(5100);
+        }
+        assert.equal(again.pageRefreshes.length, 0, 'at most one page reload per 10 minutes per tab');
+
+        for (const hooked of ['identity', 'other-worker', 'vod']) {
+            const quiet = recoveryHarness(file), quietKinds = [];
+            const worker = { postMessage() {} };
+            quiet.context.hookWindowWorker.workers = new WeakMap(hooked === 'identity' ? [[worker, 'confirmed']] : []);
+            quiet.context.twitchWorkers = hooked === 'other-worker' ? [{}] : [];
+            if (hooked === 'vod') quiet.current.state.props.content.type = 'vod';
+            quiet.context.doTwitchPlayerTask = (isPausePlay, isReload, kind) => quietKinds.push(kind);
+            Object.assign(quiet.current.player.video, { readyState: 4, paused: false });
+            quiet.current.player.core.worker = worker;
+            for (let step = 0; step < 3; step++) {
+                quiet.context.checkUnhookedPlayerWorker(quiet.current);
+                quiet.advance(5100);
+            }
+            assert.deepEqual(quietKinds, [], hooked);
+        }
     });
 }

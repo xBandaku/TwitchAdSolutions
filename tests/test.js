@@ -47,7 +47,7 @@ const workerOptions = ['workerStringConflicts', 'workerStringReinsert'].map(name
 const helperNames = [
     'hasAdTags', 'getMatchedAdSignifiers', 'parseAttributes',
     'getServerTimeFromM3u8', 'replaceServerTimeInM3u8',
-    'getStreamUrlForResolution', 'videoCodecFamily', 'stripAdSegments', 'isValidWorker'
+    'getStreamUrlForResolution', 'videoCodecFamily', 'stripAdSegments', 'isValidWorker', 'tasLog'
 ];
 vm.runInContext([
     scriptFunction(helperSource, 'declareOptions'),
@@ -502,7 +502,7 @@ function playbackContext(source) {
         clearBackgroundResumeTimers() {},
         playPlayer: player => player.play(),
         hideTwitchAdOverlays() {}, updateAdblockBanner() {},
-        initializeTASControls() {}, recordTASDiagnostic() {}, updateTASWorkerDiagnostic() {},
+        initializeTASControls() {}, recordTASDiagnostic() {}, updateTASWorkerDiagnostic() {}, checkUnhookedPlayerWorker() {},
         isActivelyStrippingAds: false, playerForMonitoringBuffering: null
     });
     vm.runInContext(scriptFunction(source, 'declareOptions') + '; declareOptions(globalThis);', context);
@@ -515,7 +515,7 @@ function playbackContext(source) {
         state: { props: { content: { type: 'live' } } }
     };
     context.getPlayerAndState = () => context.playerAndState;
-    for (const name of ['updatePlayerPauseIntent', 'schedulePageRefreshFallback']) {
+    for (const name of ['updatePlayerPauseIntent', 'schedulePageRefreshFallback', 'tasLog']) {
         if (source.includes('function ' + name + '(')) vm.runInContext(scriptFunction(source, name), context);
     }
     if (source.includes('function getPlaybackChannelName(')) {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TwitchAdSolutions (video-swap-new)
 // @namespace    https://github.com/ryanbr/TwitchAdSolutions
-// @version      1.97
+// @version      1.98
 // @updateURL    https://github.com/xBandaku/TwitchAdSolutions/raw/master/video-swap-new/video-swap-new.user.js
 // @downloadURL  https://github.com/xBandaku/TwitchAdSolutions/raw/master/video-swap-new/video-swap-new.user.js
 // @description  Multiple solutions for blocking Twitch ads (video-swap-new)
@@ -47,7 +47,7 @@
         }
     }
     'use strict';
-    const ourTwitchAdSolutionsVersion = 65;// Used to prevent conflicts with outdated versions of the scripts
+    const ourTwitchAdSolutionsVersion = 66;// Used to prevent conflicts with outdated versions of the scripts
     const TAS_INSTALL_METHOD = 'userscript';
     console.log('[AD DEBUG] TwitchAdSolutions video-swap-new v' + ourTwitchAdSolutionsVersion + ' loading');
     if (typeof window.twitchAdSolutionsVersion !== 'undefined' && window.twitchAdSolutionsVersion >= ourTwitchAdSolutionsVersion) {
@@ -566,7 +566,10 @@
                                         for (let j = 0; j < normalLines.length - 1; j++) {
                                             if (normalLines[j].startsWith('#EXT-X-STREAM-INF')) {
                                                 const resSettings = parseAttributes(normalLines[j].substring(normalLines[j].indexOf(':') + 1));
-                                                const lowResUrl = getStreamUrlForResolution(encodingsM3u8, streamInfo.Urls.get(normalLines[j + 1].trimEnd()));
+                                                const mainResolutionInfo = streamInfo.Urls.get(normalLines[j + 1].trimEnd());
+                                                // Variants without RESOLUTION (audio_only) aren't in Urls and have nothing to merge.
+                                                if (!mainResolutionInfo) continue;
+                                                const lowResUrl = getStreamUrlForResolution(encodingsM3u8, mainResolutionInfo);
                                                 const lowResInf = encodingsM3u8.match(new RegExp(`^.*(?=\n.*${lowResUrl})`, 'm'))?.[0];
                                                 if (!lowResInf) continue;
                                                 const lowResSettings = parseAttributes(lowResInf.substring(lowResInf.indexOf(':') + 1));
@@ -1665,7 +1668,7 @@
     }
     function getTASDiagnosticState() {
         if (typeof window === 'undefined') return null;
-        return window.__tasDiagnostics || (window.__tasDiagnostics = { script: 'video-swap-new', version: '1.97',
+        return window.__tasDiagnostics || (window.__tasDiagnostics = { script: 'video-swap-new', version: '1.98',
             startedAt: Date.now(), events: [], current: { backup: 'none', quality: 'unknown', recovery: 'none', inAdBreak: false }, render() {} });
     }
     function getTASDiagnostics() {
@@ -2138,7 +2141,7 @@
         window.twitchAdSolutionsTools = { openSettings: show, diagnostics: getTASDiagnostics };
     }
     function onContentLoaded() {
-        initializeTASControls('video-swap-new', '1.97');
+        initializeTASControls('video-swap-new', '1.98');
         if (document.getElementById('seventv-extension')) {
             console.log('[AD DEBUG] Warning: 7TV extension detected — may cause black screen or buffering issues. If you experience problems, try disabling 7TV.');
         }

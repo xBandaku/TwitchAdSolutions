@@ -790,7 +790,7 @@ for (const file of scripts.filter(script => script.file.includes('brave-fix')).m
     });
 }
 
-for (const file of ['vaft/vaft.user.js', 'vaft/vaft-violentmonkey.user.js', 'vaft/vaft-ublock-origin.js',
+for (const file of ['vaft/vaft.user.js', 'vaft/vaft-ublock-origin.js',
     'video-swap-new/video-swap-new.user.js', 'video-swap-new/video-swap-new-ublock-origin.js']) {
     test('synthetic resilience: ' + file + ' preserves recovery numbering and blocks relative ad media inside its injected worker', async ({ page, context }) => {
         const state = await boot(page, context, file);
@@ -1027,7 +1027,8 @@ for (const file of scripts.filter(script => /^(vaft\/vaft|video-swap-new\/)/.tes
         await dialog.getByLabel('Reload cooldown in seconds').fill('45');
         await dialog.getByRole('button', { name: 'Save settings' }).click();
         await page.evaluate(() => {
-            const source = `self.postMessage({key:'TASDiagnostic',event:'backup-selected',playerType:'autoplay',quality:'640x360',durationMs:120,authorization:'OAuth private',url:'https://private.invalid/token'});`;
+            const source = `self.postMessage({key:'TASDiagnostic',event:'backup-selected',playerType:'autoplay',quality:'640x360',durationMs:120,authorization:'OAuth private',url:'https://private.invalid/token'});`
+                + `self.postMessage({key:'TASLog',text:'[AD DEBUG] New stream session — channel: privatechannel, API: v2 https://edge.invalid/privatepath.m3u8?sig=private'});`;
             window.__diagnosticWorker = new Worker(URL.createObjectURL(new Blob([source], { type: 'text/javascript' })));
         });
         const timeline = dialog.locator('#timeline');
@@ -1042,10 +1043,10 @@ for (const file of scripts.filter(script => /^(vaft\/vaft|video-swap-new\/)/.tes
         expect(reportText).toContain('### Script version\n\n' + script);
         expect(reportText).toContain('### Browser\n\nPlease fill in');
         expect(reportText).toContain(file.includes('ublock-origin') ? '### Install method\n\nuBlock Origin'
-            : file.includes('violentmonkey') ? '### Install method\n\nViolentmonkey'
-                : '### Install method\n\nPlease fill in');
+            : '### Install method\n\nPlease fill in');
         expect(reportText).toContain('### What happened?');
         expect(reportText).toContain('### Console output\n\n```shell');
+        if (script === 'vaft') expect(reportText).toMatch(/\+\d+\.\ds \[AD DEBUG\] New stream session — channel: <channel>, API: v2 https:\/\/edge\.invalid\/<redacted>/);
         expect(reportText).toContain('### Other Twitch extensions installed');
         expect(reportText).toContain('### Troubleshooting');
         expect(reportText).toContain('local diagnostic events; not proof of live playback');
