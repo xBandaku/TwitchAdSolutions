@@ -46,19 +46,19 @@ On Windows PowerShell use `npm.cmd` / `npx.cmd` (REQUIREMENTS.md). `TWITCH_TEST_
 
 ## Worker blob serialization (critical)
 
-Functions serialized with `.toString()` into the worker blob cannot reference outer-scope variables: `processM3U8`, `stripAdSegments`, `resolvePlaylistUrls`, `hookWorkerFetch`, `getAccessToken`, `gqlRequest`, `hasAdTags`, `getMatchedAdSignifiers`, `notifyAdComplete`, `getStreamUrlForResolution`, `parseAttributes`, `getServerTimeFromM3u8`, `replaceServerTimeInM3u8`, `pruneStreamInfos`, `createStreamInfo`, `getWasmWorkerJs`, `videoCodecFamily`, `resetAdEndTracking`, `triggerEarlyReloadIfNeeded`.
+Functions serialized with `.toString()` into the worker blob cannot reference outer-scope variables: `processM3U8`, `stripAdSegments`, `resolvePlaylistUrls`, `hookWorkerFetch`, `getAccessToken`, `gqlRequest`, `hasAdTags`, `getMatchedAdSignifiers`, `notifyAdComplete`, `getStreamUrlForResolution`, `parseAttributes`, `getServerTimeFromM3u8`, `replaceServerTimeInM3u8`, `pruneStreamInfos`, `createStreamInfo`, `getWasmWorkerJs`, `videoCodecFamily`, `resetAdEndTracking`, `triggerEarlyReloadIfNeeded`, `getBackupSequenceOffset`, `shiftMediaSequence`, `planUntrackedAdReload`.
 - Declare state in `declareOptions()` (also serialized) or the inline blob template literal.
 - Pass window values in after `declareOptions(self)`, e.g. `ReloadPlayerAfterAd = ${ReloadPlayerAfterAd};`.
 - Hoisting a regex or referencing an outer variable from these functions throws `ReferenceError` only at runtime in the worker (v68.5.42 fixed one in video-swap-new's `gqlRequest`).
-- `createStreamInfo()` declares every StreamInfo field up front (46 vaft, 31 video-swap-new).
+- `createStreamInfo()` declares every StreamInfo field up front (70 vaft, 31 video-swap-new).
 
 ## Conventions
 
 - Synced pairs carry identical logic. Tests require each userscript/uBlock pair to match statement for statement at top level. uBlock files start with the line `twitch-videoad.js text/javascript` (resource header, not JS); tooling strips it.
-- Version bump for any functional change: `@version` and `ourTwitchAdSolutionsVersion` together, in every format of that script. Tests require vaft and video-swap-new to report one version in `@version`, diagnostics and the settings panel. Current: vaft 68.5.44/129, video-swap-new 1.98/66, strip 1.13/30, Brave helper 1.3.6/10.
+- Version bump for any functional change: `@version` and `ourTwitchAdSolutionsVersion` together, in every format of that script. Tests require vaft and video-swap-new to report one version in `@version`, diagnostics and the settings panel. Current: vaft 68.5.45/130, video-swap-new 1.98/66, strip 1.13/30, Brave helper 1.3.6/10.
 - Naming differs per script: vaft `AdSignifiers`, `AdSegmentURLPatterns`, `ForceAccessTokenPlayerType`, `ReloadPlayerAfterAd`; video-swap-new `AD_SIGNIFIERS`, `AD_SEGMENT_URL_PATTERNS`, `OPT_FORCE_ACCESS_TOKEN_PLAYER_TYPE`, `ReloadPlayerAfterAd`; strip `ForceAccessTokenPlayerType` (default `site`), `ReloadPlayerAfterAds`.
 - Logging: `[AD DEBUG]` prefix; inside serialized functions call `console.log` directly. Many logs are deduped per break or per page load.
-- Settings: `localStorage` keys `twitchAdSolutions_<name>`, read once at init and injected into the worker. User-facing ones are in README; vaft-only toggles include `backupSwapFirst`, `preferLowQualityBackup`, `fastAutoplayFirstTry`, `recoverFromSilentMute`, `disableAdSpoofing` (default `'true'` = spoofing off), `disablePostBreakWedge`, `pageRefreshFallback`, `iosSoftReload` (default on), `disableReloadCap`, `driftCorrectionRate` (1.1). `earlyReloadPollThreshold` defaults to 3 in vaft and 5 in video-swap-new. README's settings table lists only some keys.
+- Settings: `localStorage` keys `twitchAdSolutions_<name>`, read once at init and injected into the worker. User-facing ones are in README; vaft-only toggles include `backupSwapFirst`, `preferLowQualityBackup`, `fastAutoplayFirstTry`, `recoverFromSilentMute`, `disableAdSpoofing` (default `'true'` = spoofing off), `disablePostBreakWedge`, `pageRefreshFallback`, `iosSoftReload` (default on), `alignBackupSequence`, `keepBackupSessions`, `untrackedReload`, `unhookedPageReload`, `disableReloadCap`, `driftCorrectionRate` (1.1). `earlyReloadPollThreshold` defaults to 3 in vaft and 5 in video-swap-new. README's settings table lists only some keys.
 - Backup player types: vaft `embed`, `site`, `popout`, `mobile_web`; video-swap-new `embed`, `popout`, `mobile_web`. `autoplay` (360p) is only a last-resort/fast-path backup in vaft and is never pinned.
 - Overlay hiding: only exact attribute selectors with no parent walking (currently `[data-test-selector="sda-wrapper"]`). Broader hides (`.player-overlay-background`, ad-break text match) were removed for hiding real UI.
 - Changelog entries are prose paragraphs that end with an evidence classification, validation done, and the version line.
@@ -73,7 +73,8 @@ Functions serialized with `.toString()` into the worker blob cannot reference ou
 
 - SSAI ads live in m3u8 segments and can be stripped. CSAI ads come from `edge.ads.twitch.tv`, are only logged, and must not trigger reloads: when `hadStrippedSegments === false`, skip the reload to avoid cascades.
 - Buffer monitor (`monitorPlayerBuffering`) polls every 1-3 s and drives pause/play or reload. Reload cooldown 30 s, escalates to 90 s after 3+ reloads in 5 min; one buffer-monitor reload per recovery window (`recoveryReloadUsed`); grace 15 s after reload, 10 s after backup switch.
-- Worker reload messages of kind `early` request a fresh player and token and bypass the near-live latency check; other reloads are soft. Apple touch devices keep the player and only refresh the token.
+- Reload kinds `early`, `untracked-ads` (both from the worker) and `worker-recovery` (main thread) request a fresh player and token and bypass the near-live latency check; other reloads are soft. Apple touch devices keep the player and only refresh the token.
+- Backup handling: committed backups are renumbered onto the native media sequence (`AlignBackupSequence`); ad-laden backup sessions are kept up to 60 s of ads (`KeepBackupSessions`); while every backup type is ad-laden (`AllBackupsAdLaden`) the active type is kept and poll/loading-circle early reloads are skipped.
 - Early reload fires on prolonged all-stripped freezes (3 polls, or 1 when the recovery cache has <3 segments). Recovery-segment cache is dropped once older than 30 s (`RecoverySegmentsAt`).
 - Sticky CSAI fast path keeps its own early-reload trigger because the normal-path check is unreachable after its early return.
 - `startDriftCorrection` runs 1.1x with a 30 s safety timeout; `playerForMonitoringBuffering = null` on reload forces re-acquisition.
@@ -90,6 +91,7 @@ Functions serialized with `.toString()` into the worker blob cannot reference ou
 
 - Latest release v68.5.44 (PRs 65-69): version/uBlock sync guard tests, video-swap-new audio-only backup merge fix, vaft post-reload pinned-backup probe fix.
 - PR #70 merged after v68.5.44: release workflow split into read-only `build` and write-only `publish` jobs, actions pinned to commit SHAs.- Open PR #57: Dependabot bump of @playwright/test 1.64.1 -> 1.65.1.
+- vaft 68.5.45 in Unreleased: ports from the Helli24 fork (backup media-sequence alignment, unhooked-worker and unregistered-playlist reloads, kept ad-laden backup sessions). Fork survey notes: rrro0orrr and Helli24 are the only forks with fixes worth taking.
 - Decided: keep `@updateURL`/`@downloadURL` and README install links on `raw/master`, not release asset links.
 - Suggested, not done: branch protection "include administrators" (owner's setting).
 - The "Violentmonkey test" copy (`vaft/vaft-violentmonkey.user.js`) was removed with its test-harness entries; Violentmonkey users install `vaft/vaft.user.js`.

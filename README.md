@@ -119,6 +119,10 @@ localStorage.removeItem('twitchAdSolutions_hideAdOverlay');
 | `disableAdSpoofing` | `true`; vaft only | Ad-tracking beacons are not sent. Set to `false` to send them. |
 | `disablePostBreakWedge` | Unset; vaft only | Set to `true` to turn off recovery for frozen video with running audio after a break. |
 | `iosSoftReload` | `true`; vaft only | On Apple touch devices, keep the existing player when reloading. Set to `false` to replace it. |
+| `alignBackupSequence` | `true`; vaft only | Renumber a backup stream's segments to match the live stream so the player does not skip them. Set to `false` to keep the backup's own numbering. |
+| `keepBackupSessions` | `true`; vaft only | Keep using an ad-laden backup stream for up to 60 seconds of ads instead of requesting a new one on every poll, since each new one starts with its own preroll. Set to `false` to request a new one every time. |
+| `untrackedReload` | `true`; vaft only | Reload the player (at most twice in 10 minutes) when a live playlist vaft never registered carries ads. Set to `false` to disable. |
+| `unhookedPageReload` | `true`; vaft only | When the player was created before vaft loaded and a player reload does not fix it, reload the page once (at most every 10 minutes per tab). Set to `false` to only log it. |
 
 During an autoplay backup, Twitch's quality menu can still show Source while playback is at 360p. Vaft attempts to restore full quality when the break ends.
 

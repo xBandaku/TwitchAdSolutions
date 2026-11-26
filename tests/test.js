@@ -502,7 +502,7 @@ function playbackContext(source) {
         clearBackgroundResumeTimers() {},
         playPlayer: player => player.play(),
         hideTwitchAdOverlays() {}, updateAdblockBanner() {},
-        initializeTASControls() {}, recordTASDiagnostic() {}, updateTASWorkerDiagnostic() {},
+        initializeTASControls() {}, recordTASDiagnostic() {}, updateTASWorkerDiagnostic() {}, checkUnhookedPlayerWorker() {},
         isActivelyStrippingAds: false, playerForMonitoringBuffering: null
     });
     vm.runInContext(scriptFunction(source, 'declareOptions') + '; declareOptions(globalThis);', context);
