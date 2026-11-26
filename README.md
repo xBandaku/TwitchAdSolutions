@@ -165,6 +165,14 @@ npm run capture:playlist -- CHANNEL tests/fixtures/captured/NEW-CAPTURE.json pop
 
 Use a lowercase channel login and a new filename. The command makes anonymous live requests, redacts tokens and identifying metadata, and refuses to overwrite a fixture. Review redactions before committing. Normal tests replay committed files without network access. Keep hypothetical redirects and missing-field mutations in synthetic tests; do not edit captures to manufacture a trigger.
 
+To check live playback in a background tab through an ad break (issue #74), run:
+
+```sh
+npm run live:background -- CHANNEL
+```
+
+It opens the channel in a real Chrome with `vaft/vaft.user.js` injected (`--script` picks another userscript), hides the page behind a blank tab (`--hide minimize` or `none`), samples playback every 3 seconds through the ad break, then shows the page again. It drives Chrome over the DevTools protocol, because Playwright reports a hidden page as visible. It needs a Chrome or Edge build that decodes H.264: pass `--chrome PATH` or set `CHROME_PATH`, otherwise it looks for a system install and then Playwright's Chromium. Results go to `background-runs/` (ignored by git): the log, every sample, the diagnostics export while hidden and after showing the page, and `summary.json`. Exit code 0 means an ad break ended while hidden and playback kept moving, 1 means it stalled, and 2 means no break ended while hidden, so the run proves nothing. Channels that serve prerolls to logged-out viewers give the most reliable runs. Chrome treats a fully covered window as hidden too, so leave the window alone while the page is meant to be visible. `npm run live:background -- --help` lists the options.
+
 Findings and PRs must state `confirmed live`, `reproduced from a captured response`, or `synthetic edge case`, plus any missing evidence. Offline replay does not prove live playback impact. Synthetic-only fixes are preventive hardening.
 
 Verify each regression against its pre-fix source and the working tree. For the missing-resolution case:

@@ -3,7 +3,7 @@ const globals = require('globals');
 const { scripts, readScript, scriptNodes } = require('./tests/scripts');
 
 module.exports = [
-    { ignores: ['node_modules/**', 'release-artifact/**', 'playwright-report/**', 'test-results/**'] },
+    { ignores: ['node_modules/**', 'release-artifact/**', 'background-runs/**', 'playwright-report/**', 'test-results/**'] },
     js.configs.recommended,
     {
         files: ['**/*.js'],

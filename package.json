@@ -9,6 +9,7 @@
     "test:resilience": "node tests/test.js && node --test --test-name-pattern=\"synthetic resilience:\" tests/*.test.js",
     "test:regression": "node tests/regression.js",
     "capture:playlist": "node tests/capture.js",
+    "live:background": "node tests/background.js",
     "test:browser": "playwright test --config tests/playwright.config.js",
     "test:project": "node --test tests/project.test.js",
     "test:package": "node tests/package.js"
