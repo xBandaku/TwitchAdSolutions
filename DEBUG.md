@@ -115,7 +115,7 @@ When reporting an issue, include:
 
 1. **Script version** — the `vaft v<number>` from the first console line
 2. **Browser and install method** — e.g. Chrome + Tampermonkey, Firefox + uBO
-3. **Console log** — copy the full `[AD DEBUG]` output. Use a paste service like [logpasta.com](https://logpasta.com) for long logs
+3. **Console log** — in vaft, **Generate bug report** in the settings panel already includes the last 50 `[AD DEBUG]` lines with channel names, URLs and tokens redacted. Otherwise copy the full `[AD DEBUG]` output. Use a paste service like [logpasta.com](https://logpasta.com) for long logs
 4. **What happened** — describe what you saw (loading circle, video pause, ad shown, etc.)
 5. **Channel** — which Twitch channel you were watching
 
